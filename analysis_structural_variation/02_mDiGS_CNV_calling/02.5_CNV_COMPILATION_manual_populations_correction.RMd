@@ -1,0 +1,387 @@
+---
+title: "Compile CNV calls from the 3 capture batches - manual correction"
+author: "David Morales-Heil"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 5.5,
+	fig.height = 4.25
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'here' )
+library( 'grid' )
+library( 'gridExtra' )
+library( 'patchwork' )
+library( 'tidyverse' )
+library( 'copynumber' )
+```
+
+Combines the CNV calls for the three capture batches that were analyzed separately. Three tables are produced:
+1. CNV identified along with the number of individuals in all three capture batches that were called as 0,1,2,3,4,5 copy number populations.
+
+2. Same as #1, except reporting the percentage of the cohort that was called in each copy number population.
+
+3  CNV identified along with the list of individuals who were identified as having the CNV. (This will be useful for plotting out normalized coverage plots for potential supplementary figures.)
+
+***NOTE***:  For CNV that were not called in all capture batches, the samples for the capture batch in which the CNV was not called are all reported as 2-copy individuals.
+
+***NOTE***:  Sometimes the "same" CNV was called in multiple capture batches, but the position window of the CNV was slightly off (by one or two sliding windows). The data is joined by joining batch_2 to batch1, then joining batch_3 to batch_1/2. The position window for the pre-existing sliding window in the CNV table is used for all CNV. CNV are determined as being the same if there is a 90% overlap of the two called CNV.
+
+```{r }
+#ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_MANUAL_CNV_ID.txt
+
+cnv_BATCH1_file = here::here('output','mDiGS_CNV', paste('manual_cnv_correction' , 'BATCH_1' , 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_') )
+  
+cnv_BATCH2_file = here::here('output','mDiGS_CNV', paste('BATCH_2' , 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_') )  
+
+cnv_BATCH3_file = here::here('output','mDiGS_CNV', paste('manual_cnv_correction' , 'BATCH_3' , 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_') )
+
+batch1_data = read.table(file = cnv_BATCH1_file, header=TRUE)
+batch2_data = read.table(file = cnv_BATCH2_file, header=TRUE)
+batch3_data = read.table(file = cnv_BATCH3_file, header=TRUE)
+
+batch1_data$GENE=as.character(batch1_data$GENE)
+batch2_data$GENE=as.character(batch2_data$GENE)
+batch3_data$GENE=as.character(batch3_data$GENE)
+
+CNV_COUNTER = 1
+
+batch1_data$CNV_ID = c(rep(-9,length(batch1_data$chrom)))
+
+for (i in 1:length(batch1_data$CNV_ID)) {
+  temp_cnv = paste('CNV' , CNV_COUNTER , sep="_")
+  batch1_data$CNV_ID[i] = temp_cnv
+  CNV_COUNTER = CNV_COUNTER + 1
+}
+
+joint_cnv = batch1_data
+
+
+###
+###  Join batch1 and batch2 CNV calls:
+###     - compare chromosome number and genomic position windows between batch2 cnv and all of batch1 cnv.
+###           -if there is a batch1 cnv that the batch2 cnv window overlaps 90% with (or vice versa), 
+###            then identify as the same cnv
+###           -if a batch2 cnv does not overlap with a batch1 cnv, give the batch2 cnv a new CNV_ID
+###
+
+batch2_data$CNV_ID = c(rep(-9,length(batch2_data$chrom)))
+
+for (i in 1:length(batch2_data$CNV_ID)) {
+  print(i)
+  temp_B2_chrom = batch2_data$chrom[i]
+  temp_B2_interval = c(seq(batch2_data$start.pos[i],batch2_data$end.pos[i],1))
+  
+  for (j in 1:length(joint_cnv$chrom)) {
+    
+    temp_joint_chrom = joint_cnv$chrom[j]
+    
+    if (temp_joint_chrom == temp_B2_chrom) {
+      
+      temp_joint_interval = c(seq(joint_cnv$start.pos[j],joint_cnv$end.pos[j],1))
+      
+      interval_overlap = intersect(temp_joint_interval, temp_B2_interval)
+      
+      pct_B2_overlap = (length(interval_overlap)/length(temp_B2_interval))
+      
+      pct_joint_overlap = (length(interval_overlap)/length(temp_joint_interval))
+      
+      if ( ( pct_B2_overlap >= 0.9) | ( pct_joint_overlap >= 0.9 ) ) {
+        
+        batch2_data$CNV_ID[i] = joint_cnv$CNV_ID[j]
+        
+        break
+      } else {
+        #NONE
+      }
+    } else {
+      #NONE
+    }
+  }
+  
+  if (batch2_data$CNV_ID[i] == -9) {
+    batch2_data$CNV_ID[i] = paste('CNV',CNV_COUNTER,sep="_")
+    CNV_COUNTER = CNV_COUNTER + 1
+  }
+}
+
+
+###
+###  Join Batch1 and batch2 data together.
+###
+###  NOTE:  here i just use the batch1 CNV call genomic window as for the start/stop positions of the CNV.  In
+###         our case the CNV calls that get merged were only off by 50bp (i think).  But in the case of a smaller
+###         batch1 CNV deletion located completely within a larger batch2 CNV deletion.  The batch1 coordinates
+###         would be used.  
+###
+###         Perhaps this should be changed to use the coordinates for the larger of the two CNV calls
+###
+###         Or perhaps I need to set a conditional threshold where not only does one CNV call have to be 90% contained
+###         within the other CNV call, but also, there cant be too large of a discrepancy.  So maybe both cnv have to 
+###         have 90% of the CNV window contained within the CNV call from the other batch in order to be considered the
+###         same CNV?
+###
+
+joint_cnv = full_join(joint_cnv,batch2_data,by='CNV_ID')
+
+for (i in 1:length(joint_cnv$start.pos.x)) {
+  #print(joint_cnv$start.pos.x[i])
+ 
+  if (is.na(joint_cnv$start.pos.x[i])) {
+    
+    joint_cnv$start.pos.x[i] = joint_cnv$start.pos.y[i]
+    joint_cnv$end.pos.x[i] = joint_cnv$end.pos.y[i]
+    joint_cnv$chrom.x[i] = joint_cnv$chrom.y[i]
+    joint_cnv$arm.x[i] = joint_cnv$arm.y[i]
+    joint_cnv$n.probes.x[i] = joint_cnv$n.probes.y[i]
+    joint_cnv$GENE.x[i] = joint_cnv$GENE.y[i]
+  } else{
+    #NONE
+  }
+}
+
+joint_cnv = select(
+  joint_cnv, !c(chrom.y,arm.y,start.pos.y,end.pos.y,n.probes.y,GENE.y)) %>%
+  dplyr::rename(arm=arm.x) %>%
+  dplyr::rename(chrom=chrom.x) %>%
+  dplyr::rename(start.pos=start.pos.x) %>%
+  dplyr::rename(end.pos=end.pos.x) %>%
+  dplyr::rename(n.probes=n.probes.x) %>%
+  dplyr::rename(GENE=GENE.x)
+
+################################
+###    Join Batch3 data      ###
+################################
+
+###
+###       Repeat steps from above, but now join Batch3 CNV calls
+###       with the joint-BATCH1/BATCH2 data
+###
+
+batch3_data$CNV_ID = c(rep(-9,length(batch3_data$chrom)))
+
+for (i in 1:length(batch3_data$CNV_ID)) {
+  print(i)
+  temp_B3_chrom = batch3_data$chrom[i]
+  temp_B3_interval = c(seq(batch3_data$start.pos[i],batch3_data$end.pos[i],1))
+  
+  for (j in 1:length(joint_cnv$chrom)) {
+    
+    temp_joint_chrom = joint_cnv$chrom[j]
+    
+    if (temp_joint_chrom == temp_B3_chrom) {
+      
+      temp_joint_interval = c(seq(joint_cnv$start.pos[j],joint_cnv$end.pos[j],1))
+      
+      interval_overlap = intersect(temp_joint_interval, temp_B3_interval)
+      
+      pct_B3_overlap = (length(interval_overlap)/length(temp_B3_interval))
+      
+      pct_joint_overlap = (length(interval_overlap)/length(temp_joint_interval))
+      
+      if ( ( pct_B3_overlap >= 0.9) | ( pct_joint_overlap >= 0.9 ) ) {
+        
+        batch3_data$CNV_ID[i] = joint_cnv$CNV_ID[j]
+        
+        break
+      } else {
+        #NONE
+      }
+    } else {
+      #NONE
+    }
+  }
+  
+  if (batch3_data$CNV_ID[i] == -9) {
+    batch3_data$CNV_ID[i] = paste('CNV',CNV_COUNTER,sep="_")
+    CNV_COUNTER = CNV_COUNTER + 1
+  }
+}
+
+
+joint_cnv = full_join(joint_cnv,batch3_data,by='CNV_ID')
+
+for (i in 1:length(joint_cnv$start.pos.x)) {
+  #print(joint_cnv$start.pos.x[i])
+ 
+  if (is.na(joint_cnv$start.pos.x[i])) {
+    joint_cnv$start.pos.x[i] = joint_cnv$start.pos.y[i]
+    joint_cnv$end.pos.x[i] = joint_cnv$end.pos.y[i]
+    joint_cnv$chrom.x[i] = joint_cnv$chrom.y[i]
+    joint_cnv$arm.x[i] = joint_cnv$arm.y[i]
+    joint_cnv$n.probes.x[i] = joint_cnv$n.probes.y[i]
+    joint_cnv$GENE.x[i] = joint_cnv$GENE.y[i]
+  } else{
+    #NONE
+  }
+}
+
+joint_cnv = select(
+  joint_cnv, !c(chrom.y,arm.y,start.pos.y,end.pos.y,n.probes.y,GENE.y)) %>%
+  dplyr::rename(arm=arm.x) %>%
+  dplyr::rename(chrom=chrom.x) %>%
+  dplyr::rename(start.pos=start.pos.x) %>%
+  dplyr::rename(end.pos=end.pos.x) %>%
+  dplyr::rename(n.probes=n.probes.x) %>%
+  dplyr::rename(GENE=GENE.x)
+
+joint_melt = melt( joint_cnv, id.vars=c('chrom','arm','start.pos','end.pos','n.probes','GENE','CNV_ID'),variable.name='SAMPLE', value.name='CNV_COPIES',na.rm=FALSE) 
+
+joint_melt$CNV_COPIES[is.na(joint_melt$CNV_COPIES)] = 2
+```
+
+```{r }
+###
+### Summarize CNV data with regards to
+###   1: the number of samples in various copy number population bins for each CNV
+###   2: the sample IDs for the individuals that are non-copy individuals for each CNV
+###
+
+joint_melt$zero_copies = c(rep(-9,length(joint_melt$chrom)))
+joint_melt$one_copies = c(rep(-9,length(joint_melt$chrom)))
+joint_melt$two_copies = c(rep(-9,length(joint_melt$chrom)))
+joint_melt$three_copies = c(rep(-9,length(joint_melt$chrom)))
+joint_melt$four_copies = c(rep(-9,length(joint_melt$chrom)))
+joint_melt$five_copies = c(rep(-9,length(joint_melt$chrom)))
+joint_melt$six_copies = c(rep(-9,length(joint_melt$chrom)))
+joint_melt$seven_copies = c(rep(-9,length(joint_melt$chrom)))
+joint_melt$eight_copies = c(rep(-9,length(joint_melt$chrom)))
+
+for (i in 1:length(joint_melt$chrom)) {
+  
+  temp_CNV = joint_melt$CNV_ID[i]
+  
+  joint_melt$zero_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 0) & (joint_melt$CNV_ID == temp_CNV)])
+  joint_melt$one_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 1) & (joint_melt$CNV_ID == temp_CNV)])
+  joint_melt$two_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 2) & (joint_melt$CNV_ID == temp_CNV)])
+  joint_melt$three_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 3) & (joint_melt$CNV_ID == temp_CNV)])
+  joint_melt$four_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 4) & (joint_melt$CNV_ID == temp_CNV)])
+  joint_melt$five_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 5) & (joint_melt$CNV_ID == temp_CNV)])
+  joint_melt$six_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 6) & (joint_melt$CNV_ID == temp_CNV)])
+  joint_melt$seven_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 7) & (joint_melt$CNV_ID == temp_CNV)])
+  joint_melt$eight_copies[i] = length(joint_melt$CNV_COPIES[(joint_melt$CNV_COPIES == 8) & (joint_melt$CNV_ID == temp_CNV)])
+  
+}
+
+##
+## Copy number bins distributions 
+##
+
+CNV_DISTRIBUTIONS_grouped = group_by(joint_melt , chrom , arm , start.pos , end.pos , n.probes , GENE)
+
+CNV_DISTRIBUTIONS_summarised = summarise(
+  CNV_DISTRIBUTIONS_grouped, 
+  'ZERO' = length(CNV_COPIES[CNV_COPIES == 0]) , 
+  'ONE' = length(CNV_COPIES[CNV_COPIES == 1]) , 
+  'TWO' = length(CNV_COPIES[CNV_COPIES == 2]) , 
+  'THREE' = length(CNV_COPIES[CNV_COPIES == 3]) , 
+  'FOUR' = length(CNV_COPIES[CNV_COPIES == 4]) , 
+  'FIVE' = length(CNV_COPIES[CNV_COPIES == 5]) , 
+  'SIX' = length(CNV_COPIES[CNV_COPIES == 6]) , 
+  'SEVEN' = length(CNV_COPIES[CNV_COPIES == 7]) , 
+  'EIGHT' = length(CNV_COPIES[CNV_COPIES == 8]))
+
+CNV_DISTRIBUTIONS_final_output = data.frame(CNV_DISTRIBUTIONS_summarised)
+
+
+PCT_DISTRIBUTIONS_summarised = summarise(
+  CNV_DISTRIBUTIONS_grouped , 
+  'ZERO' = length(CNV_COPIES[CNV_COPIES == 0])/length(unique(SAMPLE)) , 
+  'ONE' = length(CNV_COPIES[CNV_COPIES == 1])/length(unique(SAMPLE)) , 
+  'TWO' = length(CNV_COPIES[CNV_COPIES == 2])/length(unique(SAMPLE)) , 
+  'THREE' = length(CNV_COPIES[CNV_COPIES == 3])/length(unique(SAMPLE)) , 
+  'FOUR' = length(CNV_COPIES[CNV_COPIES == 4])/length(unique(SAMPLE)) , 
+  'FIVE' = length(CNV_COPIES[CNV_COPIES == 5])/length(unique(SAMPLE)) , 
+  'SIX' = length(CNV_COPIES[CNV_COPIES == 6])/length(unique(SAMPLE)) , 
+  'SEVEN' = length(CNV_COPIES[CNV_COPIES == 7])/length(unique(SAMPLE)) , 
+  'EIGHT' = length(CNV_COPIES[CNV_COPIES == 8])/length(unique(SAMPLE)))
+
+PCT_DISTRIBUTIONS_final_output = data.frame( PCT_DISTRIBUTIONS_summarised )
+
+##
+##  Determine which individuals are non-2-copy for each CNV
+##
+
+
+joint_melt_char_sample = mutate( joint_melt, SAMPLE = as.character(SAMPLE)) 
+
+WHO_HAS_group_cnv = group_by(joint_melt_char_sample, chrom, arm, start.pos, end.pos, n.probes, GENE)
+WHO_HAS_summarised = summarise(WHO_HAS_group_cnv,'NON_TWO_COPY_SAMPLES' = list(unique(SAMPLE[CNV_COPIES != 2])))
+WHO_HAS_final_output = data.frame(WHO_HAS_summarised)
+
+WHO_HAS_final_output$cnv_sample_names = c(rep(-9,length(WHO_HAS_final_output$chrom)))
+
+for (i in 1:length(WHO_HAS_final_output$cnv_sample_names)) {
+  temp_sample = ''
+  for (j in 1:length(WHO_HAS_final_output$NON_TWO_COPY_SAMPLES[[i]])) {
+    temp_sample= paste(temp_sample , WHO_HAS_final_output$NON_TWO_COPY_SAMPLES[[i]][j] , sep="/")
+  }
+  WHO_HAS_final_output$cnv_sample_names[i] = temp_sample
+}
+
+WHO_HAS_final_output = select(WHO_HAS_final_output , -c(NON_TWO_COPY_SAMPLES))
+
+##
+##
+##  output data
+##
+##
+
+DISTRIBUTIONS_filename = 'manual_correction_ALL_BATCHES_COMPILED_cnv_distributions.txt'
+
+write.table( CNV_DISTRIBUTIONS_final_output,
+             file=here::here('results','mDiGS_CNV', DISTRIBUTIONS_filename ),
+             quote=FALSE, 
+             sep='\t', 
+             row.names=FALSE)
+
+PCT_DIST_filename = 'manual_correction_ALL_BATCHES_COMPILED_cnv_PCT_distributions.txt'
+
+write.table( PCT_DISTRIBUTIONS_final_output,
+             file=here::here('results','mDiGS_CNV', PCT_DIST_filename ),
+             quote=FALSE, 
+             sep='\t', 
+             row.names=FALSE)
+  
+WHO_HAS_filename =  'manual_correction_ALL_BATCHES_COMPILED_who_has_CNV.txt'
+write.table( WHO_HAS_final_output, 
+             file=here::here('results','mDiGS_CNV', WHO_HAS_filename),
+             quote=FALSE, 
+             sep='\t', 
+             row.names=FALSE)
+```

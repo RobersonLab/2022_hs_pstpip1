@@ -1,0 +1,1395 @@
+---
+title: "Mean Normalized Copy Number Plots of HS Capture CNV calls"
+author: "David Morales-Heil"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 5.5,
+	fig.height = 4.25
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'grid' )
+library( 'gridExtra' )
+library( 'patchwork' )
+library( 'tidyverse' )
+library( 'copynumber' )
+```
+
+```{r }
+capture_batch_file = here::here('info', 'targeted_capture_samples_batch_info.txt')
+
+batch_info = read.table(file = capture_batch_file, header=TRUE)
+
+capture_bed_file = here::here('info', 'HS_capture_fosmid_regions_no_overlaps_WITH_GENE.bed')
+
+bed_info = read.table( file = capture_bed_file, header = FALSE)
+
+colnames(bed_info) = c('CHROM','START','END','GENE')
+```
+
+```{r read in coverage file}
+transcript_file = here::here('info', 'HS_capture_primary_transcript_exon_sequences.txt')
+
+trans_data = read.table(file = transcript_file, header = TRUE, fill=TRUE)
+```
+
+```{r fig.width=12, fig.height = 16}
+###
+###
+###  NOTCH2  CNV visualization
+###
+###
+
+batch_1_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_1_NOTCH2_batch_normalized_coverages.txt')
+batch_2_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_2_NOTCH2_batch_normalized_coverages.txt')
+batch_3_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_3_NOTCH2_batch_normalized_coverages.txt')
+
+covg_batch_1 = read.table(file = batch_1_coverage_file, header = TRUE)
+covg_batch_2 = read.table(file = batch_2_coverage_file, header = TRUE)
+covg_batch_3 = read.table(file = batch_3_coverage_file, header = TRUE)
+
+tmp_covg = join( covg_batch_1, covg_batch_2, by=c('CHROM', 'POSITION') )
+all_covg = join( tmp_covg, covg_batch_3, by=c('CHROM', 'POSITION') )
+
+###
+###  Full capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+#CNV_INDV_1_plot = ggplot() +
+#  theme_bw()+
+#  geom_point(data = all_covg, aes(x=POSITION,y=OSU_HS_2018.09.J), color='black')+
+#  theme(legend.position='None') +
+#  #scale_y_continuous(limits=c(-1,6)) +
+#  geom_segment(aes(x=120545871, xend=120554271, y=5, yend=5 ), color='green', size = 4) +
+#  geom_segment(data=trans_data[trans_data$Gene=='NOTCH2',], aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), color='red', size=4) +
+#  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+#  xlab('\nPOSITION')
+
+CNV_INDV_1_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_37.001), 
+    color='black') +
+  theme(legend.position='None') +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  geom_segment(
+    aes(x=120541671, xend=120554471, y=5.5, yend=5.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='NOTCH2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( 
+    axis.text=(element_text(size = 16)),
+    axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample') +
+  theme(plot.title=element_text(hjust=0.5))   
+
+nocnv_INDV_2_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_30.001), 
+    color='black')+
+  theme(legend.position='None') +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  geom_segment(
+    aes(
+      x=120541671, 
+      xend=120554471, 
+      y=5.5, 
+      yend=5.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='NOTCH2',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5))   
+
+nocnv_INDV_3_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = all_covg, 
+    aes(
+      x=POSITION,
+      y=peter_nagele_HS_PN_35.001), 
+    color='black')+
+  theme(legend.position='None') +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  geom_segment(
+    aes(
+      x=120541671, 
+      xend=120554471, 
+      y=5.5, 
+      yend=5.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='NOTCH2',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5))   
+
+nocnv_INDV_4_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_29.001), 
+    color='black') +
+  theme(legend.position='None') +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  geom_segment(
+    aes(
+      x=120541671, 
+      xend=120554471, 
+      y=5.5, 
+      yend=5.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='NOTCH2',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION')+
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #3') +
+  theme(plot.title=element_text(hjust=0.5))
+
+
+
+###
+###  Zoomed-in capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+ZOOM_CNV_INDV_1_plot = ggplot() +
+  theme_bw() +
+  #geom_point(data = all_covg, aes(x=POSITION,y=OSU_HS_2018.09.J), color='black')+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_37.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=120541671, 
+      xend=120554471, 
+      y=5.5, 
+      yend=5.5 ), color='green', size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='NOTCH2',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample') +
+  theme(plot.title=element_text(hjust=0.5)) +  
+  scale_x_continuous(limits=c(120500000,120600000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_nocnv_INDV_2_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_30.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=120541671, 
+      xend=120554471, 
+      y=5.5, 
+      yend=5.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='NOTCH2',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5)) +  
+  scale_x_continuous(limits=c(120500000,120600000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_nocnv_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_35.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=120541671, 
+      xend=120554471, 
+      y=5.5, 
+      yend=5.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='NOTCH2',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5)) +  
+  scale_x_continuous(limits=c(120500000,120600000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_nocnv_INDV_4_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_29.001), 
+    color='black') +
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=120541671, 
+      xend=120554471, 
+      y=5.5, 
+      yend=5.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='NOTCH2',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #3') +
+  theme(plot.title =element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(120500000,120600000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+combined_whole_region_plots = ggarrange(
+  plotlist = list(CNV_INDV_1_plot, nocnv_INDV_2_plot, nocnv_INDV_3_plot, nocnv_INDV_4_plot), 
+  ncol=1, 
+  nrow=4)
+plot(combined_whole_region_plots)
+
+combined_ZOOM_plots = ggarrange(
+  plotlist = list(ZOOM_CNV_INDV_1_plot, ZOOM_nocnv_INDV_2_plot, ZOOM_nocnv_INDV_3_plot, ZOOM_nocnv_INDV_4_plot), 
+  ncol=1, 
+  nrow=4)
+plot(combined_ZOOM_plots)
+
+
+notch2_file = here::here('results', 'NOTCH2_supplemental_CNV_covg_plot.pdf')
+notch2_zoomed_file = here::here('results', 'NOTCH2_supplemental_CNV_covg_plot_ZOOMED.pdf')
+
+pdf(file = notch2_file, width=12, height=16)
+plot(combined_whole_region_plots)
+dev.off()
+
+pdf(file = notch2_zoomed_file, width=12, height=16)
+plot(combined_ZOOM_plots)
+dev.off()
+```
+
+```{r fig.width=12, fig.height = 8}
+###
+###
+###  RBPJ CNV #1  visualization
+###
+###
+
+
+batch_1_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_1_RBPJ_batch_normalized_coverages.txt')
+batch_2_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_2_RBPJ_batch_normalized_coverages.txt')
+batch_3_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_3_RBPJ_batch_normalized_coverages.txt')
+
+covg_batch_1 = read.table(file = batch_1_coverage_file, header = TRUE)
+covg_batch_2 = read.table(file = batch_2_coverage_file, header = TRUE)
+covg_batch_3 = read.table(file = batch_3_coverage_file, header = TRUE)
+
+tmp_covg = join( covg_batch_1, covg_batch_2, by=c('CHROM', 'POSITION') )
+all_covg = join( tmp_covg, covg_batch_3, by=c('CHROM', 'POSITION') )
+
+
+###
+###  Full capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+CNV_INDV_1_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_45.001), 
+    color='black') +
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=26255112, 
+      xend=26256862, 
+      y=5, 
+      yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) 
+
+nocnv_INDV_2_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_41.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=26255112, 
+      xend=26256862, 
+      y=5, 
+      yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) 
+
+nocnv_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_50.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=26255112, 
+      xend=26256862, 
+      y=5, 
+      yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))  
+
+
+
+###
+###  Zoomed-in capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+ZOOM_CNV_INDV_1_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_45.001), 
+    color='black')+
+  theme(legend.position='None') +
+  #scale_y_continuous(limits=c(-1,6)) +
+  geom_segment(
+    aes(
+      x=26255112, 
+      xend=26256862, 
+      y=5, 
+      yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(26225000,26300000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_nocnv_INDV_2_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_41.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=26255112, 
+      xend=26256862, 
+      y=5, 
+      yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(
+      x=Exon_Start,
+      xend=Exon_End,
+      y=6,
+      yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(26225000,26300000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_nocnv_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_50.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(
+      x=26255112, 
+      xend=26256862, 
+      y=5, 
+      yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(26225000,26300000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+combined_whole_region_plots = ggarrange(
+  plotlist = list(CNV_INDV_1_plot, nocnv_INDV_2_plot, nocnv_INDV_3_plot), 
+  ncol=1, 
+  nrow=3)
+plot(combined_whole_region_plots)
+
+combined_ZOOM_plots = ggarrange(
+  plotlist = list(ZOOM_CNV_INDV_1_plot, ZOOM_nocnv_INDV_2_plot, ZOOM_nocnv_INDV_3_plot), 
+  ncol=1, 
+  nrow=3)
+plot(combined_ZOOM_plots)
+
+cnv1_rbpj_file = here::here('results', 'RBPJ_CNV1_supplemental_CNV_covg_plot.pdf')
+cnv1_rbpj_zoomed_file = here::here('results', 'RBPJ_CNV1_supplemental_CNV_covg_plot_ZOOMED.pdf')
+
+pdf(file = cnv1_rbpj_file, width=12, height=12)
+plot(combined_whole_region_plots)
+dev.off()
+
+pdf(file = cnv1_rbpj_zoomed_file, width=12, height=12)
+plot(combined_ZOOM_plots)
+dev.off()
+```
+
+```{r fig.width=12, fig.height = 4}
+
+###
+###  RBPJ CNV #1
+###
+###  MISSED DELETION CALL
+###
+###  peter_nagele_HS_PN_31.001 was called as having the RBPJ #2 deletion in our pipeline.  In the process of plotting
+###  this sample for the RBPJ #2 deletion, there looked like there was also another deletion in the plotting 
+###  window. When I went back and plotted this sample for the RBPJ CNV #1 deletion, peter_nagele_HS_PN_31.001 clearly
+###  has that deletion, however the CNV was not called.  I believe that this smaller RBPJ deletion #1 was only called
+###  during the analysis of one batch of samples.  I am sure there are lots of things that our pipeline misses, but
+###  I am not sure what to do about this miss that we now see is a miss.
+###
+
+
+ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_31.001), 
+    color='black')+
+  theme(legend.position='None') +
+  #scale_y_continuous(limits=c(-1,6)) +
+  geom_segment(
+    aes(
+      x=26255112, 
+      xend=26256862, 
+      y=5, 
+      yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('\nPOSITION') +
+  scale_x_continuous(limits=c(26225000,26300000)) +
+  scale_y_continuous(limits=c(0,6), breaks=c(seq(0,6,1)))
+
+ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_29.001), 
+    color='black')+
+  theme(legend.position='None') +
+  #scale_y_continuous(limits=c(-1,6)) +
+  geom_segment(
+    aes(x=26255112, xend=26256862, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('\nPOSITION') +
+  scale_x_continuous(limits=c(26225000,26300000)) +
+  scale_y_continuous(limits=c(0,6), breaks=c(seq(0,6,1)))
+```
+
+
+```{r fig.width=12, fig.height = 12}
+###
+###
+###  RBPJ CNV #2  visualization
+###
+###
+
+
+batch_1_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_1_RBPJ_batch_normalized_coverages.txt')
+batch_2_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_2_RBPJ_batch_normalized_coverages.txt')
+batch_3_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_3_RBPJ_batch_normalized_coverages.txt')
+
+covg_batch_1 = read.table(file = batch_1_coverage_file, header = TRUE)
+covg_batch_2 = read.table(file = batch_2_coverage_file, header = TRUE)
+covg_batch_3 = read.table(file = batch_3_coverage_file, header = TRUE)
+
+tmp_covg = join( covg_batch_1, covg_batch_2, by=c('CHROM', 'POSITION') )
+all_covg = join( tmp_covg, covg_batch_3, by=c('CHROM', 'POSITION') )
+
+###
+###  Full capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+CNV_INDV_1_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_24), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=26289262, xend=26295512, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5))
+
+nocnv_INDV_2_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_10), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=26289262, xend=26295512, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5))
+
+CNV_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_31.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=26289262, xend=26295512, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5))
+
+nocnv_INDV_4_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_36.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(aes(x=26289262, xend=26295512, y=5, yend=5 ), color='green', size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5))
+
+###
+###  Zoomed-in capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+ZOOM_CNV_INDV_1_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_24), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=26289262, xend=26295512, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(26250000,26350000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_nocnv_INDV_2_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_10), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=26289262, xend=26295512, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(26250000,26350000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_CNV_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_31.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=26289262, xend=26295512, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(26250000,26350000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_nocnv_INDV_4_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=peter_nagele_HS_PN_36.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=26289262, xend=26295512, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='RBPJ',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(26250000,26350000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+combined_whole_region_plots = ggarrange(
+  plotlist = list(CNV_INDV_1_plot, nocnv_INDV_2_plot, CNV_INDV_3_plot, nocnv_INDV_4_plot), 
+  ncol=1, 
+  nrow=4)
+plot(combined_whole_region_plots)
+
+combined_ZOOM_plots = ggarrange(
+  plotlist = list(ZOOM_CNV_INDV_1_plot, ZOOM_nocnv_INDV_2_plot, ZOOM_CNV_INDV_3_plot, ZOOM_nocnv_INDV_4_plot), 
+  ncol=1, 
+  nrow=4)
+plot(combined_ZOOM_plots)
+
+cnv2_rbpj_file = here::here('results', 'RBPJ_CNV2_supplemental_CNV_covg_plot.pdf')
+cnv2_rbpj_zoomed_file = here::here('results', 'RBPJ_CNV2_supplemental_CNV_covg_plot_ZOOMED.pdf')
+
+pdf(file = cnv2_rbpj_file, width=12, height=16)
+plot(combined_whole_region_plots)
+dev.off()
+
+pdf(file = cnv2_rbpj_zoomed_file, width=12, height=16)
+plot(combined_ZOOM_plots)
+dev.off()
+```
+
+```{r fig.width=12, fig.height = 12}
+###
+###
+###  MAML2   visualization
+###
+###
+
+batch_1_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_1_MAML2_batch_normalized_coverages.txt')
+batch_2_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_2_MAML2_batch_normalized_coverages.txt')
+batch_3_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_3_MAML2_batch_normalized_coverages.txt')
+
+covg_batch_1 = read.table(file = batch_1_coverage_file, header = TRUE)
+covg_batch_2 = read.table(file = batch_2_coverage_file, header = TRUE)
+covg_batch_3 = read.table(file = batch_3_coverage_file, header = TRUE)
+
+tmp_covg = join( covg_batch_1, covg_batch_2, by=c('CHROM', 'POSITION') )
+all_covg = join( tmp_covg, covg_batch_3, by=c('CHROM', 'POSITION') )
+
+###
+###  Full capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+CNV_INDV_1_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_80), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5))
+
+CNV_INDV_2_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_59), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5))
+
+nocnv_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, aes(x=POSITION,y=irish_cohort_HS_24), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample') +
+  theme(plot.title=element_text(hjust=0.5)) 
+
+
+###
+###  Zoomed-in capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+ZOOM_CNV_INDV_1_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_80), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(95975000,96025000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_CNV_INDV_2_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_59), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(95975000,96025000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ZOOM_nocnv_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_24), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  ggtitle('No CNV Sample') +
+  theme(plot.title=element_text(hjust=0.5)) +
+  scale_x_continuous(limits=c(95975000,96025000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+
+combined_whole_region_plots = ggarrange(
+  plotlist = list( nocnv_INDV_3_plot, CNV_INDV_2_plot, CNV_INDV_1_plot ), 
+  ncol=1, 
+  nrow=3)
+plot(combined_whole_region_plots)
+
+combined_ZOOM_plots = ggarrange(
+  plotlist = list(ZOOM_nocnv_INDV_3_plot ,  ZOOM_CNV_INDV_2_plot, ZOOM_CNV_INDV_1_plot), 
+  ncol=1, 
+  nrow=3)
+plot(combined_ZOOM_plots)
+
+
+maml2_file = here::here('results', 'MAML2_supplemental_CNV_covg_plot.pdf')
+maml2_zoomed_file = here::here('results', 'MAML2_supplemental_CNV_covg_plot_ZOOMED.pdf')
+
+pdf(file = maml2_file, width=12, height=12)
+plot(combined_whole_region_plots)
+dev.off()
+
+pdf(file = maml2_zoomed_file, width=12, height=12)
+plot(combined_ZOOM_plots)
+dev.off()
+```
+
+
+```{r fig.width=12, fig.height=4}
+###
+###
+###  MAML2 missed CNV
+###
+###  irish_cohort_HS_18 has the MAML2 polymorphism plotted in the previous section.  irish_cohort_HS_18 has
+###  one copy of the deletion.  in the process of plotting out different samples, it looks like irish_cohort_HS_18
+###  also clearly has a deletion upstream of the MAML2 polymorphism that was not called in the CNV analysis pipeline
+###
+###
+
+
+ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_18), 
+    color='black')+
+  theme(legend.position='None') +
+  #scale_y_continuous(limits=c(-1,6)) +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('\nPOSITION') +
+  scale_x_continuous(limits=c(95975000,96025000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_24), 
+    color='black')+
+  theme(legend.position='None') +
+  #scale_y_continuous(limits=c(-1,6)) +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('\nPOSITION') +
+  scale_x_continuous(limits=c(95975000,96025000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+
+ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_41.001), 
+    color='black')+
+  theme(legend.position='None') +
+  #scale_y_continuous(limits=c(-1,6)) +
+  geom_segment(
+    aes(x=96001925, xend=96003475, y=5, yend=5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='MAML2',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  xlab('\nPOSITION') +
+  scale_x_continuous(limits=c(95975000,96025000)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1)))
+```
+
+```{r fig.width=12, fig.height = 12}
+###
+###
+###  PSTPIP1   visualization
+###
+###  Batch 1 samples...
+###
+
+
+batch_1_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_1_PSTPIP1_batch_normalized_coverages.txt')
+batch_2_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_2_PSTPIP1_batch_normalized_coverages.txt')
+batch_3_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_3_PSTPIP1_batch_normalized_coverages.txt')
+
+covg_batch_1 = read.table(file = batch_1_coverage_file, header = TRUE)
+covg_batch_2 = read.table(file = batch_2_coverage_file, header = TRUE)
+covg_batch_3 = read.table(file = batch_3_coverage_file, header = TRUE)
+
+tmp_covg = join( covg_batch_1, covg_batch_2, by=c('CHROM', 'POSITION') )
+all_covg = join( tmp_covg, covg_batch_3, by=c('CHROM', 'POSITION') )
+
+###
+###  Full capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+# 0 copies
+CNV_INDV_1_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_28), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=77330643, xend=77332793, y=6.5, yend=6.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='PSTPIP1',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  #ggtitle('CNV Sample #1') +
+  theme(plot.title=element_text(hjust=0.5))
+
+CNV_INDV_2_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_86), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=77330643, xend=77332793, y=6.5, yend=6.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='PSTPIP1',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  #ggtitle('CNV Sample #2') +
+  theme(plot.title=element_text(hjust=0.5))
+
+nocnv_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=irish_cohort_HS_22), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=77330643, xend=77332793, y=6.5, yend=6.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='PSTPIP1',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('POSITION') +
+  ylab('Mean Normalized Copy Number') +
+  #ggtitle('No CNV Sample') +
+  theme(plot.title=element_text(hjust=0.5))
+
+combined_whole_region_plots = ggarrange(
+  plotlist = list( CNV_INDV_2_plot, nocnv_INDV_3_plot,  CNV_INDV_1_plot ), 
+  ncol=1, 
+  nrow=3)
+plot(combined_whole_region_plots)
+
+pstpip1_file = here::here('results', 'PSTPIP1_supplemental_CNV_covg_plot.pdf')
+
+pdf(file = pstpip1_file, width=12, height=12)
+plot(combined_whole_region_plots)
+dev.off()
+```
+
+```{r fig.width=12, fig.height = 12}
+###
+###
+###  PSTPIP1   visualization
+###
+###  Batch2 samples....  Batch 2 samples were all either 2, 1, or 0 copies
+###
+###
+
+
+batch_1_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_1_PSTPIP1_batch_normalized_coverages.txt')
+batch_2_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_2_PSTPIP1_batch_normalized_coverages.txt')
+batch_3_coverage_file = here::here('output', 'mDiGS_normalized_coverages','BATCH_3_PSTPIP1_batch_normalized_coverages.txt')
+
+covg_batch_1 = read.table(file = batch_1_coverage_file, header = TRUE)
+covg_batch_2 = read.table(file = batch_2_coverage_file, header = TRUE)
+covg_batch_3 = read.table(file = batch_3_coverage_file, header = TRUE)
+
+tmp_covg = join( covg_batch_1, covg_batch_2, by=c('CHROM', 'POSITION') )
+all_covg = join( tmp_covg, covg_batch_3, by=c('CHROM', 'POSITION') )
+
+###
+###  Full capture region plots;  orange = individuals with CNV, blue = non-CNV individuals
+###
+
+# 0 copies
+CNV_INDV_1_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_47.001), 
+    color='black')+
+  theme(legend.position='None') +
+  #scale_y_continuous(limits=c(-1,6)) +
+  geom_segment(
+    aes(x=77330643, xend=77332793, y=6.5, yend=6.5 ), 
+    color='green', 
+    size = 4) +  
+  geom_segment(
+    data=trans_data[trans_data$Gene=='PSTPIP1',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('\nPOSITION')
+
+CNV_INDV_2_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_41.001), 
+    color='black')+
+  theme(legend.position='None') +
+  #scale_y_continuous(limits=c(-1,6)) +
+  geom_segment(
+    aes(x=77330643, xend=77332793, y=6.5, yend=6.5 ), 
+    color='green', 
+    size = 4) +
+  geom_segment(
+    data=trans_data[trans_data$Gene=='PSTPIP1',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('\nPOSITION')
+
+
+## this individual is called as 2 copies but looks like 3-4 copies
+nocnv_INDV_3_plot = ggplot() +
+  theme_bw()+
+  geom_point(
+    data = all_covg, 
+    aes(x=POSITION,y=nagele_HS_PN_42.001), 
+    color='black')+
+  theme(legend.position='None') +
+  geom_segment(
+    aes(x=77330643, xend=77332793, y=6.5, yend=6.5 ), 
+    color='green', 
+    size = 4) +  
+  geom_segment(
+    data=trans_data[trans_data$Gene=='PSTPIP1',], 
+    aes(x=Exon_Start,xend=Exon_End,y=6,yend=6), 
+    color='red', 
+    size=4) +
+  theme( axis.text=(element_text(size = 16)), axis.title=element_text(size=16)) +
+  scale_y_continuous(limits=c(0,7), breaks=c(seq(0,7,1))) +
+  xlab('\nPOSITION')
+
+combined_whole_region_plots = ggarrange(plotlist = list( nocnv_INDV_3_plot, CNV_INDV_2_plot,   CNV_INDV_1_plot ), ncol=1, nrow=3)
+plot(combined_whole_region_plots)
+```

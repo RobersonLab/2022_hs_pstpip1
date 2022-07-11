@@ -1,0 +1,592 @@
+---
+title: "hs_capture_CNV_analysis_CNV_filtering"
+author: "David Morales-Heil"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 5.5,
+	fig.height = 4.25
+)
+```
+
+```{r load packages, include=FALSE}
+
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'grid' )
+library( 'gridExtra' )
+library( 'patchwork' )
+library( 'tidyverse' )
+library( 'copynumber' )
+```
+
+```{r }
+capture_batch_file = here::here('info', 'targeted_capture_samples_batch_info.txt')
+batch_info = read.table(file = capture_batch_file, header=TRUE)
+
+capture_bed_file = here::here('info' , 'HS_capture_fosmid_regions_no_overlaps_WITH_GENE.bed')
+bed_info = read.table( file = capture_bed_file, header = FALSE)
+
+colnames(bed_info) = c('CHROM','START','END','GENE')
+```
+
+```{r }
+
+##
+## Read in raw_coverage file.  
+##
+## The raw coverages will be used as a way to filter out low confidence CNV calls.
+##
+
+raw_covg_file = here::here('output','raw_capture_coverages', 'HS_capture_all_AFFECTED_samples_region_coverages.txt')
+raw_covg_data = read.table( file = raw_covg_file, header = TRUE)
+```
+
+Functions for filtering segmetation calls from 02.1_segmentation_calling_and_normalization.RMd.
+There are 3 major filter strategies to generate a final pool of high confidence CNV calls:
+
+1. Raw Coverage Filter
+Segmentations in regions with low raw sequencing coverage have much wider distributions in normalized coverage/cnv-copies, making it hard to distinguish discrete copy number populations from onen another. Therefore having a low raw coverage filter will remove these segmentations that are not callable with high confidence. This also makes intuitive sense. If a third of samples had 0 coverage, a third of samples had 3X coverage and a third of samples had 6X coverage in a segmentation region, the mean coverage would be 3X and the 6X coverage population would be called as 2X diploid coverage, or 4-copies. All because of seeing 3 more reads covering each position over the region. The lower the raw coverage for a region is, the harder it will be to detect genuine copy-number variation signal from noise.  I decided to implement a cutoff at 20X raw coverage.  ***NOTE***: The calculation I perform for average raw coverage over the segmentation region is the average raw coverage over the region for all samples.
+
+2. SD filter:
+In order to confidently distinguish which copy-number population a sample belongs too, there needs to be a certain threshold of standard deviation of copy-number coverage for samples in each population. There is a parallel here with qPCR. If you want to be able to quantify qPCR samples with differing by 1 Ct in 99.7% of cases the standard deviation for the assay has to be 1 cycle divided by 6 standard deviations or 0.167. I have applie a similar logic to quantifying copy-number. In order to accurately call a sample as belonging to either the 2-copy population or the 3-copy population, the standard deviation for quantifying those populations has to be less than a particular level for a particular confidence. I have chosen to implement a cutoff of standard deviation (SD) of <0.167.  The question became how to calculate this SD without having known copy-number populations.  What I decided to do was, for every segmentation, I took all of the values >1.5 copies and <=2.5 copies and called this the 2-copy population.  I then calculated the SD for this estimated 2-copy population. If the SD was >= 0.167 the segmentation is decided to be un-callable and is filtered.  Even if we don't know what the 1 or 3 copy population standard deviation may be, if we know the 2 copy population fails to meet the SD threshold, then the segmentation is not callable.
+
+3. Two Staged CNV Thresholds:
+After a segmentation passes the two filters above, we then ask whether or not there are any samples that look to have more than or less than 2 copies.  The question became, how to set a threshold for calling a CNV sample. I originally decided to set thresholds at the half-copy marker.  So >1.5 and <=2.5 is 2-copies, >2.5 and <=3.5 is 3 copies, etc. This still leads to calls that lack confidence, e.g. segmentations where one sample has 2.51 copies and is called as a 3-copy sample.  I ultimately decided to have a two-tiered staggered threshold system. First a stringent threshold was implemented. A segmentation could not be called as being a CNV unless at least one sample had < 1.25 copies or > 2.75 copies. Once this threshold was met, the segmentation was identified as a CNV, and a looser threshold was applied to determine whether each sample had the CNV.  This looser threshold categorized samples by the half-copy threshold described at the start of this explanation. This two tiered system protects against calling a rare CNV because of one sample having a borderline copy-number, but then adapts to polymorphic CNV by being more forgiving to calling samples as having CNV once the segmentation has met the stricter threshold and we are more confident that there is a CNV at that segmentation.
+
+
+```{r PROCESS_SEGMENTATIONS_FROM_ALL_GENES_TOGETHER}
+
+## This function performs all the math for figuring out the average raw coverage,
+## the SD, and the CNV status of the segmentation.
+##
+## A separate function after this one then performs the actual filter and data return.
+##
+
+median_normalization_filtering = function( batch ) {
+  
+  cnv_file = here::here('output','mDiGS_CNV', paste(batch , 'ALL_GENES_COMPILED_CNV_fold_diff_segmentation_calls.txt', sep='_') )
+  
+  
+  cnv_data = read.table( file = cnv_file , header = TRUE)
+  
+  SAMPLE_LIST = colnames(cnv_data)[grepl('OSU|irish|nagele',colnames(cnv_data))]
+  
+  
+  raw_melt = melt( raw_covg_data  , id.vars=c('CHROM','POSITION'),variable.name='SAMPLE', value.name='COVERAGE') %>%
+    filter( SAMPLE %in% SAMPLE_LIST)
+  
+  ###
+  ### Give each segmentation an identifier.
+  ###
+  CNV_number = c(rep(-9,length(cnv_data$chrom)))
+  for (i in 1:length(CNV_number)) {
+    CNV_number[i] = paste(cnv_data$GENE[i], "CNV", i, sep='_')
+  }
+  cnv_data$CNV_NUMBER = CNV_number
+  
+  ###
+  ###  Calculate the average raw coverage depth over each segmentation genomic region.  
+  ###  Here we are calculating average coverage for over the region for all samples in
+  ###  the cohort.  The idea being that we might be able to filter out segmentations as
+  ###  being 'low quality' or 'low reliability for calling a CNV' based on whether the
+  ###  segmentation falls in a low coverage region.
+  ###
+  
+  
+  cnv_data$RAW_COVG = c(rep(-9, length(cnv_data$chrom)))
+  
+  for (i in 1:length(cnv_data$RAW_COVG)) {
+    
+    cnv_data$RAW_COVG[i] = mean(raw_melt$COVERAGE[(raw_melt$POSITION >= cnv_data$start.pos[i]) & (raw_melt$POSITION <= cnv_data$end.pos[i]) & (raw_melt$CHROM == cnv_data$chrom[i])])
+      
+  }
+  
+  ###
+  ### Mmmmmmm... melted data.
+  ###
+  
+  cnv_melt = melt( cnv_data, id.vars=c('chrom','arm','start.pos','end.pos','n.probes','GENE','CNV_NUMBER','RAW_COVG'),variable.name='SAMPLE', value.name='CNV_COVG')
+  
+  cnv_melt$CNV_COPIES = 2*cnv_melt$CNV_COVG
+  
+  cnv_melt$SMOOTH_COPIES = cnv_melt$CNV_COPIES
+  
+  cnv_melt = mutate(cnv_melt, SMOOTH_COPIES = case_when(
+    (CNV_COPIES>=0) & (CNV_COPIES <=0.5) ~ 0, 
+    (CNV_COPIES>0.5) & (CNV_COPIES <=1.5) ~ 1,  
+    (CNV_COPIES>1.5) & (CNV_COPIES <=2.5) ~ 2, 
+    (CNV_COPIES>2.5) & (CNV_COPIES <=3.5) ~ 3, 
+    (CNV_COPIES>3.5) & (CNV_COPIES <=4.5) ~ 4, 
+    (CNV_COPIES>4.5) & (CNV_COPIES <=5.5) ~ 5, 
+    (CNV_COPIES > 5.5) & (CNV_COPIES <=6.5)  ~ 6, 
+    (CNV_COPIES > 6.5) & (CNV_COPIES <=7.5)  ~ 7, 
+    (CNV_COPIES > 7.5) & (CNV_COPIES <=8.5)  ~ 8, 
+    (CNV_COPIES > 8.5) & (CNV_COPIES <= 9.5)  ~ 9, 
+    (CNV_COPIES > 9.5) & (CNV_COPIES <= 10.5)  ~ 10 ) )
+  
+  ###
+  ###  Identify which Segmentations are "CNV" and which are just non-CNV "SEGMENTATIONS".
+  ###  Here a CNV is defined as a segmentation where at least one individual has a CNV_COPIES
+  ###  of <=1.5 or >2, in other words, a segmentation where someone has something other than 2 copies.
+  ###
+  
+  cnv_melt$CNV_TYPE = c(rep(-9,length(cnv_melt$chrom)))
+  
+  for (i in 1:length(cnv_melt$CNV_TYPE)) {
+    
+    temp_CNV_id = cnv_melt$CNV_NUMBER[i]
+    
+    CNV_count = length(cnv_melt$CNV_COPIES[(cnv_melt$CNV_NUMBER == temp_CNV_id) & ( (cnv_melt$CNV_COPIES < 1.25) |  (cnv_melt$CNV_COPIES > 2.75) )] )
+
+    if ( CNV_count > 0 ) {
+      temp_CNV_type = 'CNV'
+    } else {
+      temp_CNV_type = 'SEGMENTATION'    
+    }
+    
+    cnv_melt$CNV_TYPE[i] = temp_CNV_type
+  }
+  
+  cnv_melt$CNV_TYPE = factor(cnv_melt$CNV_TYPE, levels=c('SEGMENTATION','CNV'))
+  
+  ###
+  ###  Create CNV_CALL parameter.  Identify which individuals are called as CNV, i.e., <=1.5 copies
+  ###  or >2.5 copies (as done above). Knowing the status of the individuals will be important for
+  ###  calculating the standard deviation for the predicted 2-copy population for each segmentation.
+  ###  The SD for the 2 copy population will determine if the data is tight enough to reliably call 
+  ###  CNV, and therefore which segmentations are filtered out of the analysis.
+  ###
+  
+  
+  cnv_melt$CNV_CALL = cnv_melt$CNV_COVG
+  cnv_melt$CNV_CALL[(cnv_melt$CNV_TYPE == 'CNV') & ((cnv_melt$CNV_COPIES <= 1.5) | (cnv_melt$CNV_COPIES > 2.5))]  = 'INDIVIDUAL_CNV'
+  cnv_melt$CNV_CALL[(cnv_melt$CNV_TYPE == 'CNV') & (cnv_melt$CNV_COPIES > 1.5)  & (cnv_melt$CNV_COPIES <= 2.5)] = 'INDIVIDUAL_SEG'
+  cnv_melt$CNV_CALL[(cnv_melt$CNV_TYPE == 'SEGMENTATION')] = 'INDIVIDUAL_SEG'
+  cnv_melt$CNV_CALL = factor(cnv_melt$CNV_CALL , levels = c('INDIVIDUAL_SEG','INDIVIDUAL_CNV'))
+  
+  cnv_melt$STD_DEV = c(rep(-9,length(cnv_melt$chrom)))
+  
+  for (i in 1:length(cnv_melt$STD_DEV)) {
+    
+    cnv_melt$STD_DEV[i] = sd(cnv_melt$CNV_COPIES[(cnv_melt$CNV_NUMBER == cnv_melt$CNV_NUMBER[i]) & (cnv_melt$CNV_CALL == 'INDIVIDUAL_SEG') ])
+  }
+  
+  cnv_melt$CNV_COLOR = as.character(cnv_melt$CNV_TYPE)
+  cnv_melt$CNV_COLOR[cnv_melt$CNV_TYPE == 'SEGMENTATION'] = 'blue'
+  cnv_melt$CNV_COLOR[cnv_melt$CNV_TYPE == 'CNV'] = 'red'
+  
+  cnv_melt$CNV_COLOR[(cnv_melt$GENE %in% c('PSTPIP1','MAML2')) & (cnv_melt$CNV_TYPE=='CNV')] = 'green'
+  cnv_melt$CNV_COLOR = factor(cnv_melt$CNV_COLOR, levels=c('blue','red','green'))
+  cnv_melt$CNV_ALPHA = as.character(cnv_melt$CNV_COLOR)
+  cnv_melt$CNV_ALPHA[cnv_melt$CNV_COLOR %in% c('blue','red')] = 'low'
+  cnv_melt$CNV_ALPHA[cnv_melt$CNV_COLOR == 'green'] = 'high'
+  cnv_melt$CNV_ALPHA = factor(cnv_melt$CNV_ALPHA , levels = c('low','high'))
+  
+  return (cnv_melt)
+}
+```
+
+```{r }
+filter_CNV_by_SD = function( batch, batch_median_normalized_melt_data) {
+
+  SD_filtered_melt = filter( batch_median_normalized_melt_data, STD_DEV < 0.167)
+  
+  DETPH_SD_filtered_melt = filter( SD_filtered_melt, RAW_COVG > 20 )
+
+  filtered_CNV_only = filter( DETPH_SD_filtered_melt, CNV_TYPE == 'CNV')
+  
+  filtered_CNV_COPIES_back = dcast( filtered_CNV_only, chrom + arm + start.pos + end.pos + n.probes + GENE~ SAMPLE, value.var = 'CNV_COPIES')
+  filtered_CNV_SMOOTH_back = dcast( filtered_CNV_only, chrom + arm + start.pos + end.pos + n.probes + GENE~ SAMPLE, value.var = 'SMOOTH_COPIES')
+
+  temp_COPIES_file_name = here::here('output', 'mDiGS_CNV', paste(batch, 'ALL_GENES_COMPILED_filtered_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_'))
+  temp_SMOOTH_file_name = here::here('output', 'mDiGS_CNV', paste(batch, 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_'))
+  
+  write.table( filtered_CNV_COPIES_back, file = temp_COPIES_file_name, quote=FALSE, sep='\t', row.names=FALSE)
+  write.table( filtered_CNV_SMOOTH_back, file = temp_SMOOTH_file_name, quote=FALSE, sep='\t', row.names=FALSE)
+
+  return( filtered_CNV_COPIES_back )
+}
+```
+
+```{r fig.height= 5, fig.width=12}
+plot_median_normalization_results = function( median_normalized_melt_data ) { 
+  
+  temp_data = median_normalized_melt_data
+  
+  all_segmentations_distributions_plot = ggplot() +
+    theme_bw() +
+    geom_jitter(
+      data = temp_data,
+      aes( x = CNV_NUMBER, y = CNV_COPIES, color = CNV_TYPE ),
+      width = 0.15,
+      height = 0,
+    ) +
+  #geom_point(data = temp_data, aes(x = CNV_NUMBER , y = CNV_COPIES, color = CNV_TYPE), position = position_jitter(width=0.15)) +
+  scale_color_manual(values = c('blue','red','green')) +
+  theme(axis.text.x=element_blank(),axis.text.y=element_text(size=14), axis.title=element_text(size=16)) +
+  ylab('CNV copies\n') +
+  xlab('\nSEGMENTATION and CNV') 
+  
+  cnv_copies_by_raw_covg_plot = ggplot() +
+    theme_bw() +
+    geom_point(
+      data = temp_data, 
+      aes(x=RAW_COVG, y=CNV_COPIES, color=CNV_COLOR)
+      ) +
+    scale_color_manual(values = c('blue','red','green')) +
+    theme(
+      axis.text.x=element_text(size=12),
+      axis.text.y=element_text(size=14), 
+      axis.title=element_text(size=16)) +
+  ylab('CNV COPIES\n') +
+  xlab('\nAVG RAW COVG OVER CNV REGION') 
+  #scale_x_continuous(limits = c(0,200), breaks=c(seq(0,200,25)))
+  
+
+  cnv_copies_by_SD_plot = ggplot() +
+    theme_bw() +
+  geom_point(
+    data = temp_data, 
+    aes(x=STD_DEV, y=CNV_COPIES, color=CNV_COLOR)) +
+    scale_color_manual(values = c('blue','red','green')) +
+    theme(axis.text.x=element_text(size=12),axis.text.y=element_text(size=14), axis.title=element_text(size=16)) +
+    ylab('CNV COPIES\n') +
+    xlab('\nSTD_DEV of Segmentation Coverages\n(computed using only samples defined as not having a CNV)') +
+    geom_segment(aes(x=0.167, xend=0.167,y=-0.5,yend=5.5), linetype='dashed',color='black') +
+    geom_segment(aes(x=0.25, xend=0.25,y=-0.5,yend=5.5), linetype='dashed',color='black') 
+
+  cnv_copies_by_SD_plot_ZOOMED = ggplot() +
+    theme_bw() +
+    geom_point(data = temp_data, aes(x=STD_DEV, y=CNV_COPIES, color=CNV_COLOR)) +
+    scale_color_manual(values = c('blue','red','green')) +
+    theme(axis.text.x=element_text(size=12),axis.text.y=element_text(size=14), axis.title=element_text(size=16)) +
+    ylab('CNV COPIES\n') +
+    xlab('\nSTD_DEV of Segmentation Coverages\n(computed using only samples defined as not having a CNV)') +
+    geom_segment(aes(x=0.167, xend=0.167,y=-0.5,yend=5.5), linetype='dashed',color='black') +
+    geom_segment(aes(x=0.25, xend=0.25,y=-0.5,yend=5.5), linetype='dashed',color='black') +
+    scale_x_continuous(limits=c(0.05,0.15),breaks=c(seq(0.05,0.15,0.025)))
+
+  segmentations_by_COVG_and_SD_plot = ggplot() +
+    theme_bw() +
+    geom_point(data = temp_data, aes(x=STD_DEV, y=RAW_COVG, color=CNV_TYPE, alpha=CNV_ALPHA)) +
+    scale_alpha_manual(values = c(0.015,1)) +
+    scale_color_manual(values = c('blue','red','green')) +
+    theme(axis.text.x=element_text(size=12),axis.text.y=element_text(size=14), axis.title=element_text(size=16)) +
+    geom_segment(aes(x=0.167,xend=0.167,y=0,yend=375),linetype='dashed',color='black') +
+    geom_segment(aes(x=0,xend=0.167,y=20,yend=20),linetype='dashed',color='black') +
+    ylab('AVERAGE RAW COVERAGE\nACROSS SEGMENTATION\n') +
+    xlab('\nSTD_DEV of Segmentation Coverages\n(computed using only samples defined as not having a CNV)') 
+  
+  
+  plot( all_segmentations_distributions_plot )
+  plot( cnv_copies_by_raw_covg_plot )
+  plot( cnv_copies_by_SD_plot )
+  plot( cnv_copies_by_SD_plot_ZOOMED )
+  plot( segmentations_by_COVG_and_SD_plot )
+}
+```
+
+```{r fig.height= 5, fig.width=12}
+#####
+#####  BATCH_1 analysis
+#####
+
+batch1_melt = median_normalization_filtering( 'BATCH_1' )
+
+batch1_filtered_data = filter_CNV_by_SD( 'BATCH_1' , batch1_melt)
+
+plot_median_normalization_results( batch1_melt )
+```
+
+```{r fig.height= 5, fig.width=12}
+#####
+#####  BATCH_2 analysis
+#####
+
+batch2_melt = median_normalization_filtering( 'BATCH_2' )
+
+batch2_filtered_data = filter_CNV_by_SD( 'BATCH_2' , batch2_melt)
+
+plot_median_normalization_results( batch2_melt )
+```
+
+
+```{r fig.height= 5, fig.width=12}
+
+#####
+#####  BATCH_3 analysis
+#####
+
+batch3_melt = median_normalization_filtering( 'BATCH_3' )
+
+batch3_filtered_data = filter_CNV_by_SD( 'BATCH_3' , batch3_melt)
+
+plot_median_normalization_results( batch3_melt )
+```
+
+
+```{r fig.width=10, fig.height = 4}
+B1_covg_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch1_melt,
+             aes(x = RAW_COVG, y = CNV_COPIES),
+             color = 'black') +
+  geom_segment(aes(
+    x = 20,
+    xend = 20,
+    y = 0,
+    yend = 6
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 6), breaks = c(seq(0, 6, 1))) +
+  ylab('COPY NUMBER\n') +
+  xlab('AVG RAW COVG OVER CNV REGION') +
+  ggtitle('Capture Batch 1') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+
+B2_covg_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch2_melt,
+             aes(x = RAW_COVG, y = CNV_COPIES),
+             color = 'black') +
+  geom_segment(aes(
+    x = 20,
+    xend = 20,
+    y = 0,
+    yend = 6
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 6), breaks = c(seq(0, 6, 1))) +
+  ylab('COPY NUMBER\n') +
+  xlab('AVG RAW COVG OVER CNV REGION') +
+  ggtitle('Capture Batch 2') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+
+B3_covg_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch3_melt,
+             aes(x = RAW_COVG, y = CNV_COPIES),
+             color = 'black') +
+  geom_segment(aes(
+    x = 20,
+    xend = 20,
+    y = 0,
+    yend = 6
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 6), breaks = c(seq(0, 6, 1))) +
+  ylab('COPY NUMBER\n') +
+  xlab('AVG RAW COVG OVER CNV REGION') +
+  ggtitle('Capture Batch 3') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+
+B1_SD_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch1_melt,
+             aes(x = STD_DEV, y = CNV_COPIES) ,
+             color = 'black') +
+  geom_segment(aes(
+    x = 0.167,
+    xend = 0.167,
+    y = 0,
+    yend = 6
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 6), breaks = c(seq(0, 6, 1))) +
+  ylab('COPY NUMBER\n') +
+  xlab('2-COPY POPULATION STANDARD DEVIATION') +
+  ggtitle('Capture Batch 1') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+
+B2_SD_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch2_melt,
+             aes(x = STD_DEV, y = CNV_COPIES) ,
+             color = 'black') +
+  geom_segment(aes(
+    x = 0.167,
+    xend = 0.167,
+    y = 0,
+    yend = 6
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 6), breaks = c(seq(0, 6, 1))) +
+  ylab('COPY NUMBER\n') +
+  xlab('2-COPY POPULATION STANDARD DEVIATION') +
+  ggtitle('Capture Batch 2') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+
+B3_SD_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch3_melt,
+             aes(x = STD_DEV, y = CNV_COPIES) ,
+             color = 'black') +
+  geom_segment(aes(
+    x = 0.167,
+    xend = 0.167,
+    y = 0,
+    yend = 6
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 6), breaks = c(seq(0, 6, 1))) +
+  ylab('COPY NUMBER\n') +
+  xlab('2-COPY POPULATION STANDARD DEVIATION') +
+  ggtitle('Capture Batch 3') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+
+B1_COVGSD_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch1_melt, aes(x = STD_DEV, y = RAW_COVG), color =
+               'black') +
+  geom_segment(aes(
+    x = 0.167,
+    xend = 0.167,
+    y = 20,
+    yend = 250
+  ), linetype = 'dashed') +
+  geom_segment(aes(
+    x = 0,
+    xend = 0.167,
+    y = 20,
+    yend = 20
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 250), breaks = c(seq(0, 250, 50))) +
+  ylab('AVG RAW COVERAGE\n') +
+  xlab('2-COPY POPULATION STANDARD DEVIATION') +
+  ggtitle('Capture Batch 1') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+
+B2_COVGSD_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch2_melt, aes(x = STD_DEV, y = RAW_COVG) , color =
+               'black') +
+  geom_segment(aes(
+    x = 0.167,
+    xend = 0.167,
+    y = 20,
+    yend = 410
+  ), linetype = 'dashed') +
+  geom_segment(aes(
+    x = 0,
+    xend = 0.167,
+    y = 20,
+    yend = 20
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 410), breaks = c(seq(0, 400, 50))) +
+  ylab('AVG RAW COVERAGE\n') +
+  xlab('2-COPY POPULATION STANDARD DEVIATION') +
+  ggtitle('Capture Batch 2') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+
+B3_COVGSD_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = batch3_melt, aes(x = STD_DEV, y = RAW_COVG) , color =
+               'black') +
+  geom_segment(aes(
+    x = 0.167,
+    xend = 0.167,
+    y = 20,
+    yend = 380
+  ), linetype = 'dashed') +
+  geom_segment(aes(
+    x = 0,
+    xend = 0.167,
+    y = 20,
+    yend = 20
+  ), linetype = 'dashed') +
+  theme(
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 14),
+    axis.title = element_text(size = 14)
+  ) +
+  scale_y_continuous(limits = c(0, 380), breaks = c(seq(0, 400, 50))) +
+  ylab('AVG RAW COVERAGE\n') +
+  xlab('2-COPY POPULATION STANDARD DEVIATION') +
+  ggtitle('Capture Batch 3') +
+  theme(plot.title = element_text(size = 16, hjust = 0.5))
+```
+
+```{r fig.height = 12 , fig.width=10}
+COVG_combined = ggarrange( plotlist= list(B1_covg_plot, B2_covg_plot, B3_covg_plot), nrow=3, ncol=1)
+SD_combined = ggarrange( plotlist= list(B1_SD_plot, B2_SD_plot, B3_SD_plot), nrow=3, ncol=1)
+SD_COVG_combined = ggarrange( plotlist= list(B1_COVGSD_plot, B2_COVGSD_plot, B3_COVGSD_plot), nrow=3, ncol=1)
+```
+
+```{r fig.width=21, fig.height=12}
+all_plots = ggarrange(plotlist = list(COVG_combined, SD_combined, SD_COVG_combined), ncol=3)
+
+plot( all_plots)
+
+qc_filter_figure_file = here::here('results', 'mDiGS_CNV', 'supplemental_CNV_qc_filtering.pdf')
+
+pdf( file = qc_filter_figure_file, height = 12, width=21)
+plot( all_plots )
+dev.off()
+```

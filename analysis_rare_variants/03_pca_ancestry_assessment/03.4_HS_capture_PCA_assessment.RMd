@@ -1,0 +1,651 @@
+---
+title: "Capture Cohort PCA Analysis"
+author: "David Morales-Heil"
+date: "3/30/2021"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 5.5,
+	fig.height = 4.25
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'grid' )
+library( 'gridExtra' )
+library( 'patchwork' )
+library( 'tidyverse' )
+```
+
+```{r read in PCA file}
+prc_info = read.table( file = here::here( 'output', 'pca_results',  'PCA_1000-1000_simulated-validation_and_HS_captured_pca_table.txt' ), header = TRUE )
+```
+
+The major subpopulations available from GNOMAD are:<br>
+- NFE (non-finnish european)<br>
+- AFR (african/african american)<br>
+- AMR (admixd american/Latino)<br>
+- SAS (south east asian)<br>
+- EAS (east asian)<br>
+<br>
+<br>
+I chose not to include two other subgroups due to their small regional size:<br>
+- ASJ (Ashkenazi Jewish)<br>
+- FIN (Finnish)<br>
+<br>
+<br>
+I first performed PCA on our samples and 2000 simulated samples for each sub-population (1000 for PCA; 1000 for optimization of  kNN ancestry categorization using the PCA data:
+<br>
+<br>
+
+```{r pca_analysis}
+
+##
+##  PC analysis
+##
+
+pca_data = data.frame(prc_info[,2:length(colnames(prc_info))])
+row.names(pca_data) = prc_info[,1]
+
+prc_results = prcomp(pca_data)
+
+##
+##  Here I take the first 6 PC for further ancestry analysis.
+##
+
+results_frame = data.frame(prc_results$x[,1:6]) %>%
+  mutate( sample = rownames(pca_data)) %>%
+  mutate( cohort = sample) %>%
+  mutate( cohort = case_when(
+    grepl('nagele', sample) ~ 'nagele',
+    grepl('OSU', sample) ~ 'osu',
+    grepl('irish', sample) ~ 'irish',
+    grepl('AMR', sample) ~ 'LATINO',
+    grepl('AFR', sample) ~ 'AFRICAN',
+    grepl('NFE', sample) ~ 'NFE',
+    grepl('SAS', sample) ~ 'SAS',
+    grepl('EAS', sample) ~ 'EAS',
+    TRUE ~ NA_character_ ))%>%
+  mutate(cohort = factor( cohort ,levels = c( 'NFE', 'AFRICAN', 'LATINO', 'SAS', 'EAS', 'nagele' , 'osu', 'irish' )))%>%
+  mutate( cohort_grouped_samples = case_when(
+    grepl('nagele', sample) ~ 'SAMPLE', 
+    grepl('OSU', sample) ~ 'SAMPLE', 
+    grepl('irish', sample) ~ 'SAMPLE', 
+    grepl('AMR', sample) ~ 'LATINO', 
+    grepl('AFR', sample) ~ 'AFRICAN', 
+    grepl('NFE', sample) ~ 'NFE', 
+    grepl('SAS', sample) ~ 'SAS', 
+    grepl('EAS', sample) ~ 'EAS', TRUE ~ NA_character_ ))%>%
+  mutate(cohort_grouped_samples = factor( cohort_grouped_samples ,levels = c( 'NFE', 'AFRICAN', 'LATINO', 'SAS', 'EAS', 'SAMPLE' )))
+
+####
+#### 
+####  This isn't a part of the ultimate analysis.  Here I was just playing around with seeing how much 
+####  variance is accounted for by each PC. 
+####
+####
+
+variance_frame = data.frame('PC' = c(colnames(prc_results$x)), 'Dimension'=seq(1,length(prc_results$sdev),1) , 'Stdev' = prc_results$sdev , 'Variance' = prc_results$sdev**2)
+
+variance_frame$pct_variance = variance_frame$Variance/sum(variance_frame$Variance)
+
+ggplot() +
+  theme_bw() +  
+  geom_point( data = variance_frame[1:300,], aes(x=Dimension , y=pct_variance )) +
+  scale_y_continuous(limits = c(0,0.07), breaks=c(seq(0,0.07,0.005))) +
+  ylab('% Variance\n') +
+  xlab('\nPC')+
+  theme(axis.text=element_text(size=12) , axis.title=element_text(size=14))
+
+ggplot() +
+  theme_bw() +  
+  geom_bar( data = variance_frame[1:20,], aes(x=Dimension , y=Variance ), stat='identity') +
+  scale_y_continuous(limits = c(0,6), breaks=c(seq(0,6,0.5))) +
+  ylab('Variance\n') +
+  xlab('\nPC')+
+  theme(axis.text=element_text(size=12) , axis.title=element_text(size=14))
+
+PC_included = 6
+first_six_frame = data.frame('PC' = c(colnames(prc_results$x)[1:PC_included]), 'Dimension'=seq(1,PC_included,1) , 'Stdev' = prc_results$sdev[1:PC_included])
+first_six_frame$Variance = first_six_frame$Stdev**2                             
+first_six_frame$pct_variance = first_six_frame$Variance/sum(first_six_frame$Variance)  
+
+ggplot() +
+  theme_bw() +  
+  geom_bar( data = first_six_frame, aes(x=Dimension , y=pct_variance ), stat='identity') +
+  scale_y_continuous(limits = c(0,0.5), breaks=c(seq(0,0.5,0.05)))
+```
+
+
+```{r plot_pca, fig.width = 10, fig.height = 4}
+
+## plot all pca data
+
+pc1_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = results_frame, aes( x=PC1 , y=PC2 , color=cohort_grouped_samples ),size=2.5,shape=16) +  
+  scale_color_manual(values=c('red','purple','orange','green','blue','black'))+
+  theme(legend.key.size = unit(0.01, 'cm') , legend.title = element_blank() , legend.text = element_text(size=6) ) 
+
+pc2_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = results_frame, aes(x=PC1 , y=PC3 , color=cohort_grouped_samples), size=2.5,shape=16) +  
+  scale_color_manual(values=c('red','purple','orange','green','blue','black'))+
+  theme(legend.key.size = unit(0.01, 'cm') , legend.title = element_blank() , legend.text = element_text(size=6) ) 
+
+grid.arrange( pc1_plot , pc2_plot, nrow = 1)
+```
+
+<br>
+<br>
+
+Here is what the simulated individuals plotting looks like. The above is both the simulated training set and the simulated validation set, so 2000 individuals per subpopulation. Below, I look at just the training set and then use the UMAP package to do dimensionality reduction to make clusters in 2D plot more clear.
+<br>
+<br>
+
+
+```{r simulation_subsetting}
+
+## plot simulation training data only
+
+simulation_subset = filter(results_frame,(grepl('training',sample)))
+rownames(simulation_subset) = simulation_subset$sample
+
+simulation_data_only = select(simulation_subset, PC1, PC2, PC3, PC4, PC5, PC6 )
+
+simulation_umap = umap(simulation_data_only)
+
+sim_umap_data = data.frame(simulation_umap$layout)
+sim_umap_data = mutate(sim_umap_data, sample = rownames(simulation_umap$layout)) %>%
+  mutate( cohort = case_when(
+    grepl('nagele', sample) ~ 'nagele', 
+    grepl('OSU', sample) ~ 'osu', 
+    grepl('irish', sample) ~ 'irish', 
+    grepl('AMR', sample) ~ 'LATINO', 
+    grepl('AFR', sample) ~ 'AFRICAN', 
+    grepl('NFE', sample) ~ 'NFE', 
+    grepl('SAS', sample) ~ 'SAS', 
+    grepl('EAS', sample) ~ 'EAS', 
+    TRUE ~ NA_character_ ))%>%
+  mutate( cohort_grouped_samples = case_when(
+    grepl('nagele', sample) ~ 'SAMPLE', 
+    grepl('OSU', sample) ~ 'SAMPLE', 
+    grepl('irish', sample) ~ 'SAMPLE', 
+    grepl('AMR', sample) ~ 'LATINO', 
+    grepl('AFR', sample) ~ 'AFRICAN', 
+    grepl('NFE', sample) ~ 'NFE', 
+    grepl('SAS', sample) ~ 'SAS', 
+    grepl('EAS', sample) ~ 'EAS', 
+    TRUE ~ NA_character_ ))%>%
+  mutate(cohort = factor( cohort , levels = c( 'NFE', 'AFRICAN', 'LATINO', 'SAS', 'EAS', 'nagele' , 'osu', 'irish' )))%>%
+  mutate(cohort_grouped_samples = factor( cohort_grouped_samples ,levels = c( 'NFE', 'AFRICAN', 'LATINO', 'SAS', 'EAS', 'SAMPLE' )))
+
+sim_u_nfe = sim_umap_data[ (sim_umap_data$cohort=='NFE'),]
+sim_u_sas = sim_umap_data[ (sim_umap_data$cohort=='SAS'),]
+sim_u_amr = sim_umap_data[ (sim_umap_data$cohort=='LATINO'),]
+sim_u_afr = sim_umap_data[ (sim_umap_data$cohort=='AFRICAN'),]
+sim_u_eas = sim_umap_data[ (sim_umap_data$cohort=='EAS'),]
+
+sim_pca_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = simulation_subset, aes(x=PC1 , y=PC2 , color=cohort_grouped_samples ) , size=1.5 , shape=16) + 
+  theme(legend.position = 'None')+
+  scale_color_manual(values=c('red','purple','orange','green','blue'))+
+  xlab('PC1')+
+  ylab('PC2')+
+  theme(axis.text=element_text(size=14), axis.title=element_text(size=16))
+
+sim_pca_plot_1_v_3 = ggplot() +
+  theme_bw() +
+  geom_point(data = simulation_subset, aes(x=PC1 , y=PC3 , color=cohort_grouped_samples ) , size=1.5 , shape=16) +  
+  theme(legend.position = 'None')+
+  scale_color_manual(values=c('red','purple','orange','green','blue'))+
+  xlab('PC1')+
+  ylab('PC3')+
+  theme(axis.text=element_text(size=14), axis.title=element_text(size=16))
+
+sim_umap_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = sim_umap_data, aes(x=X1 , y=X2 , color=cohort_grouped_samples ) , size=0.5 , shape=16) +  
+  theme(legend.position = 'None')+
+  scale_color_manual(values=c('red','purple','orange','green','blue')) +
+  #scale_x_continuous(limits=c(-12.5,20))+
+  #scale_y_continuous(limits=c(-10,7.5))+
+  xlab('UMAP1')+
+  ylab('UMAP2')+
+  theme(axis.text=element_text(size=14), axis.title=element_text(size=16))
+
+sim_umap_NFE = ggplot() +
+  theme_bw() +
+  geom_point(data = sim_u_nfe , aes(x=X1,y=X2) , color='red' , size=0.5 , shape=16) +  
+  scale_x_continuous(limits=c(-12.5,20))+
+  scale_y_continuous(limits=c(-10,7.5))+
+  xlab('UMAP1')+
+  ylab('UMAP2')
+
+sim_umap_SAS = ggplot() +
+  theme_bw() +
+  geom_point(data = sim_u_sas , aes(x=X1,y=X2) , color='green' , size=0.5 , shape=16) +  
+  scale_x_continuous(limits=c(-12.5,20))+
+  scale_y_continuous(limits=c(-10,7.5))+
+  xlab('UMAP1')+
+  ylab('UMAP2')
+
+sim_umap_AFR = ggplot() +
+  theme_bw() +
+  geom_point(data = sim_u_afr , aes(x=X1,y=X2) , color='purple' , size=0.5 , shape=16) +  
+  scale_x_continuous(limits=c(-12.5,20))+
+  scale_y_continuous(limits=c(-10,7.5))+
+  xlab('UMAP1')+
+  ylab('UMAP2')
+
+sim_umap_AMR = ggplot() +
+  theme_bw() +
+  geom_point(data = sim_u_amr , aes(x=X1,y=X2) , color='orange' , size=0.5 , shape=16) +  
+  scale_x_continuous(limits=c(-12.5,20))+
+  scale_y_continuous(limits=c(-10,7.5))+
+  xlab('UMAP1')+
+  ylab('UMAP2')
+
+sim_umap_EAS = ggplot() +
+  theme_bw() +
+  geom_point(data = sim_u_eas , aes(x=X1,y=X2) , color='blue' , size=0.5 , shape=16) +  
+  scale_x_continuous(limits=c(-12.5,20))+
+  scale_y_continuous(limits=c(-10,7.5))+
+  xlab('UMAP1')+
+  ylab('UMAP2')
+
+legend_test = sim_pca_plot
+```
+
+
+```{r fig.width = 12, fig.height = 4, plot_simulation_pca_as_figure}
+pca_plot_list = list(sim_pca_plot , sim_pca_plot_1_v_3 , sim_umap_plot)
+
+pca_plot = ggarrange(plotlist = pca_plot_list , nrow = 1 , ncol=3, labels=c('a','b','c'))
+
+plot(pca_plot)
+```
+
+
+You can see that the UMAP helps to visualize the cluster separation of NFE, AMR/LATINO, and SAS.  However, you can also see that there is an overlap between the NFE, SAS, and AMR groups of simulated samples compared to the distinct separation of AFR and EAS.
+
+
+<br>
+<br>
+In order to objectively classify our samples into PCA ancestry cohorts to
+determine which aaf to use for variant burden analysis, I performed KNN analysis.
+
+The simulated samples (known sub-population cohort) were used to train KNN 
+using PC1-PC6.  I then used KNN to classify which sub-population the samples
+fell into.
+<br>
+<br>
+
+First I wanted to optimize the kNN function for the best K value. This was done by training the kNN function using simulated training data, then running multiple categorizations on a different set of simulated validation data to identify the best K value. 
+
+
+```{r knn_analysis assessing best k value}
+
+knn_func = function( trainSet , validationSet , train_TRUTH , kValue , validation_TRUTH){
+  
+  # perform knn analysis for particular K value using 1000 simulated individuals as the TRAINING set and
+  # 1000 simulated individuals as the TEST(VALIDATION) set
+  
+  temp_knn = knn( trainSet , validationSet ,  train_TRUTH , k=kValue )
+  
+  # create a temporary vector to store values and grade the performance of KNN with this particular K value
+  # generate vector with -9's as place holder. replace with 0 if KNN called the correct subpopulation. replace with 1 if
+  # KNN categorized the VALIDATION simulated individual as a subpopulation that doesn't match the subpopulation used
+  # to simulate the genotype.
+  
+  temp_evaluate = rep(-9,length(temp_knn))
+  
+  for (j in 1:length(temp_knn)){
+    if (temp_knn[j] == validation_TRUTH[j]){
+      temp_evaluate[j] = 0
+    }
+    else {
+      temp_evaluate[j] = 1
+    }
+  }
+  
+  return(temp_evaluate)
+}
+
+
+validation_subset = filter(results_frame,grepl('validation', sample))
+
+train_set = select(simulation_subset, PC1, PC2, PC3, PC4, PC5, PC6)
+
+train_def = select(simulation_subset, cohort)
+
+validation_set = select(validation_subset, PC1, PC2, PC3, PC4, PC5, PC6)
+
+k_set = seq(1,101,1)
+
+kcomparison_subset = validation_subset
+
+
+## iterate over odd k values from 1-101 and perform kNN analysis using the k values.
+## determine which validation individuals were called correctly and store that vector in data
+## frame with the other information from the validation individuals
+
+for (i in k_set){
+  
+  k_column = paste('knn', i, sep='')
+  k_error = paste( k_column , 'error' , sep='_' )
+
+  kcomparison_subset[[k_error]] = knn_func( train_set , validation_set , train_def$cohort , i , validation_subset$cohort)
+  
+}
+
+
+## create new data frame with 'k value' and 'error' columns
+## fill in data frame with total categorization error counts for
+## the indicate k values
+
+ksum = data.frame('kval' = k_set, 'error' = rep(-9,length(k_set)))
+
+for (j in 1:length(k_set)){
+  k_column = paste('knn', k_set[j], sep='')
+  k_error = paste( k_column , 'error' , sep='_' )
+
+  ksum[['error']][j] = sum(kcomparison_subset[[k_error]])
+}
+  
+
+ggplot()+
+  theme_bw()+
+  ggtitle('kNN Grouping Error For Validation Populaitons')+
+  geom_point(data = ksum, aes(x=kval, y=error)) +
+  scale_x_continuous( ) +
+  xlab('\nK Value') +
+  ylab('Incorrect Classifications\n')
+
+ggplot() +
+  theme_bw()+
+  ggtitle('Training Set')+
+  geom_point(data = simulation_subset, aes(x=PC1,y=PC2,color=cohort,alpha=cohort),size=1.5,shape=16) +  
+  scale_alpha_manual(values = c(1,1,1,1,1,1)) +
+  scale_shape_manual(values=16)+ 
+  #theme(legend.position = c(0.85,0.85),legend.text=element_text(size=8),legend.title=element_blank())+
+  scale_x_continuous(limits = c(-6.5,6.5) , breaks = c(-6, -3, 0 , 3, 6)) +
+  scale_color_manual(values=c('red','purple','orange','green','blue'))
+
+ggplot() +
+  theme_bw()+
+  ggtitle('Training Set')+
+  geom_point(data = simulation_subset, aes(x=PC1,y=PC3,color=cohort,alpha=cohort),size=1.5,shape=16) +  
+  scale_alpha_manual(values = c(1,1,1,1,1,1)) +
+  scale_shape_manual(values=16)+ 
+  #theme(legend.position = c(0.85,0.85),legend.text=element_text(size=8),legend.title=element_blank())+
+  scale_x_continuous(limits = c(-6.5,6.5) , breaks = c(-6, -3, 0 , 3, 6)) +
+  scale_color_manual(values=c('red','purple','orange','green','blue'))
+
+ggplot() +
+  theme_bw()+
+  ggtitle('Training Set')+
+  geom_point(data = validation_subset, aes(x=PC1,y=PC2,color=cohort,alpha=cohort),size=1.5,shape=16) +  
+  scale_alpha_manual(values = c(1,1,1,1,1,1)) +
+  scale_shape_manual(values=16)+ 
+  #theme(legend.position = c(0.85,0.85),legend.text=element_text(size=8),legend.title=element_blank())+
+  scale_x_continuous(limits = c(-6.5,6.5) , breaks = c(-6, -3, 0 , 3, 6)) +
+  scale_color_manual(values=c('red','purple','orange','green','blue'))
+
+ggplot() +
+  theme_bw()+
+  ggtitle('Training Set')+
+  geom_point(data = validation_subset, aes(x=PC1,y=PC3,color=cohort,alpha=cohort),size=1.5,shape=16) +  
+  scale_alpha_manual(values = c(1,1,1,1,1,1)) +
+  scale_shape_manual(values=16)+ 
+  #theme(legend.position = c(0.85,0.85),legend.text=element_text(size=8),legend.title=element_blank())+
+  scale_x_continuous(limits = c(-6.5,6.5) , breaks = c(-6, -3, 0 , 3, 6)) +
+  scale_color_manual(values=c('red','purple','orange','green','blue'))
+
+k_optimization_plot = ggplot()+
+  theme_bw()+
+  ggtitle('kNN Grouping Error For Validation Populaitons')+
+  geom_point(data = ksum, aes(x=kval, y=error)) +
+  scale_x_continuous( ) +
+  xlab('\nK Value') +
+  ylab('Incorrect Classifications\n')+
+  theme(axis.text=element_text(size=14) , axis.title=element_text(size=16),plot.title=element_text(size=16))
+
+pdf(file = here::here( 'results' , 'kNN_PCA_k_value_optimization.pdf') )
+plot(k_optimization_plot)
+dev.off()
+```
+
+It looks like there is diminishing returns on categorization accuracy after K=25.  Will use K=25.
+
+
+```{r plotting out kval vs rolling_5_kvalue_mean_error}
+
+ksum_wAVG = ksum %>%
+  mutate( roll_avg = error)
+
+for (i in 1:length(ksum$kval)){
+  print(i)
+  if (i < 5){
+    ksum_wAVG[['roll_avg']][i] = ksum[['error']][i] 
+
+  }
+  else{
+    ksum_wAVG[['roll_avg']][i] = mean(c(ksum[['error']][i] , ksum[['error']][i-1] , ksum[['error']][i-2] , ksum[['error']][i-3] , ksum[['error']][i-4]))
+  }
+}
+
+ggplot()+
+  theme_bw() +
+  geom_point(data=ksum_wAVG, aes(x=kval, y=roll_avg))+
+  ggtitle('kNN Grouping Error rolling 5-K average')+
+  scale_x_continuous( ) +
+  xlab('\nK Value') +
+  ylab('Incorrect Classifications\n')
+```
+
+Based on this analysis I chose K value of 25 for kNN.  It looks like there is no increase in accuracy after k=~50.
+
+
+```{r knn_analysis}
+
+OPTIMIZED_K_VALUE = 25
+
+samples_subset = filter( results_frame , grepl('irish|nagele|osu' , cohort) )
+
+train_set = select( simulation_subset , PC1 , PC2 , PC3 , PC4 , PC5 , PC6 )
+
+train_def = select( simulation_subset , cohort)
+
+test_set = select( samples_subset , PC1 , PC2 , PC3 , PC4 , PC5 , PC6 )
+
+knn_results = knn( train_set , test_set , train_def$cohort , k=25 )
+
+samples_subset = mutate( samples_subset , knn_cohort = knn_results ) %>%
+  mutate( knn_cohort = factor( knn_cohort , levels = c( 'NFE', 'AFRICAN', 'LATINO', 'SAS', 'EAS')))
+```
+
+<br>
+<br>
+
+```{r }
+simulation_subset = mutate(simulation_subset, knn_cohort = case_when(
+  grepl('AMR', sample) ~ 'LATINO', 
+  grepl('AFR', sample) ~ 'AFRICAN', 
+  grepl('NFE', sample) ~ 'NFE', 
+  grepl('SAS', sample) ~ 'SAS', 
+  grepl('EAS', sample) ~ 'EAS', 
+  TRUE ~ NA_character_ ))%>%
+  mutate( knn_cohort = factor( knn_cohort , levels=c('NFE', 'AFRICAN', 'LATINO', 'SAS', 'EAS')))
+
+re_merged_set = full_join( simulation_subset , samples_subset )
+rownames(re_merged_set) = paste( re_merged_set$sample , re_merged_set$knn , sep='_' )
+
+re_merged_data_only = re_merged_set[,c(1,2,3,4,5,6)]
+
+re_merged_umap = umap(re_merged_data_only)
+
+merge_umap_data = data.frame(re_merged_umap$layout)
+
+merge_umap_data = mutate( merge_umap_data , sample = rownames(re_merged_umap$layout))%>%
+  mutate(knn_cohort = case_when(
+    grepl('LATINO', sample) ~ 'LATINO', 
+    grepl('AFRICAN', sample) ~ 'AFRICAN', 
+    grepl('NFE', sample) ~ 'NFE', 
+    grepl('SAS', sample) ~ 'SAS', 
+    grepl('EAS', sample) ~ 'EAS', 
+    TRUE ~ NA_character_ ))%>%
+  mutate( cohort_grouped_samples = case_when(
+    grepl('nagele|OSU|irish', sample) ~ 'SAMPLE', 
+    grepl('AMR', sample) ~ 'LATINO', 
+    grepl('AFR', sample) ~ 'AFRICAN', 
+    grepl('NFE', sample) ~ 'NFE', 
+    grepl('SAS', sample) ~ 'SAS', 
+    grepl('EAS', sample) ~ 'EAS', 
+    TRUE ~ NA_character_ ))%>%
+  mutate(alpha_cohort = case_when( 
+    cohort_grouped_samples == 'SAMPLE' ~ '16', 
+    cohort_grouped_samples != 'SAMPLE' ~ '1', 
+    TRUE ~ NA_character_ ))%>%   
+  mutate(cohort_grouped_samples = factor(cohort_grouped_samples , levels = c( 'NFE', 'AFRICAN', 'LATINO', 'SAS', 'EAS', 'SAMPLE' ))) %>%
+  mutate(knn_cohort = factor(knn_cohort , levels=c('NFE', 'AFRICAN', 'LATINO', 'SAS', 'EAS'))) %>%
+  mutate(alpha_cohort = factor(alpha_cohort , levels=c('1','16')))
+
+```
+
+
+```{r fig.width=4, fig.height=4, plot_out_knn_figure}
+training_and_samples_frame = filter(results_frame,grepl('training|nagele|OSU|irish',sample))
+
+#sim_and_cohort_PCA_plot = 
+sim_and_cohort_PCA_plot = ggplot() +
+  theme_bw()+
+  xlab('PC1')+
+  ylab('PC2')+
+  geom_point(data = training_and_samples_frame, aes(x=PC1 , y=PC2 , color=cohort_grouped_samples ) , size=2 , shape=16) +  
+  scale_color_manual(values=c('red' , 'purple' , 'orange' , 'green' , 'blue' , 'black'))+
+  #theme(legend.position='right', legend.title=element_blank())+
+  theme(legend.position='None', legend.text=element_text(size=16), legend.key.size =unit(2,'cm'))+
+  scale_x_continuous(limits = c(-7,6), breaks=c(seq(-6,6,2))) +
+  scale_y_continuous(limits = c(-5,5))+
+  theme(axis.text=element_text(size=14), axis.title=element_text(size=16))
+
+#knn_PCA_plot = 
+knn_PCA_plot = ggplot() +
+  theme_bw()+
+  geom_point(data = samples_subset, aes(x=PC1 , y=PC2 , color=knn_cohort ) , size=2 , shape=16) +
+  theme(legend.position='None')+
+  xlab('PC1')+
+  ylab('PC2')+
+  scale_color_manual(values=c('red','purple','orange','green','blue') ) +
+  scale_x_continuous(limits = c(-7,6), breaks=c(seq(-6,6,2))) +
+  scale_y_continuous(limits = c(-5,5))+
+  theme(axis.text=element_text(size=14), axis.title=element_text(size=16))
+
+#knn_umap_plot_SIM_ONLY = 
+knn_umap_plot_SIM_ONLY = ggplot() +
+  theme_bw()+
+  geom_point(data = merge_umap_data, aes(x=X1 , y=X2 , color=knn_cohort , shape=alpha_cohort , alpha=alpha_cohort) , size=0.25) +
+  xlab('UMAP1')+
+  ylab('UMAP2')+
+  scale_shape_manual(values=c(16,16))+
+  scale_alpha_manual(values=c(.85,0))+
+  scale_color_manual(values=c('red','purple','orange','green','blue') )+
+  scale_x_continuous(limits = c(-15,20)) +
+  theme(legend.position='None') +
+  scale_y_continuous(limits = c(-6,10))+
+  theme(axis.text=element_text(size=14), axis.title=element_text(size=16))
+
+#knn_umap_plot_ALL = 
+
+knn_umap_plot_ALL = ggplot() +
+  theme_bw()+
+  #theme(plot.margin=unit(c(5,5,5,5),'cm')) +
+  geom_point(data = filter(merge_umap_data, grepl('training',sample)), aes(x=X1 , y=X2 , shape=alpha_cohort , alpha=alpha_cohort) , color='grey' ,size=0.5) +
+  geom_point(data = filter(merge_umap_data, grepl('SAMPLE',cohort_grouped_samples)), aes(x=X1 , y=X2 , shape=alpha_cohort , alpha=alpha_cohort , color=knn_cohort) ,size=1.25) +
+  scale_shape_manual(values=c(16,16))+
+  scale_alpha_manual(values=c(0.75,1))+
+  scale_color_manual(values=c('red','purple','orange','green','blue','black','black','black'))+
+  scale_x_continuous(limits = c(-15,20)) +
+  theme(legend.position='None') +
+  scale_y_continuous(limits = c(-6,10))+
+  xlab('UMAP1')+
+  ylab('UMAP2')+
+  theme(axis.text=element_text(size=14), axis.title=element_text(size=16))
+
+all_plots = list(sim_and_cohort_PCA_plot , knn_PCA_plot , knn_umap_plot_SIM_ONLY , knn_umap_plot_ALL)
+
+knn_plot = ggarrange(plotlist = all_plots , ncol=2, nrow=2, labels=c('d','e','f','g'))
+
+#plot(knn_plot)
+
+```
+
+```{r final_pca_plot , fig.width=12, fig.height=12 }
+test = ggplot_build(sim_and_cohort_PCA_plot)
+test_table = ggplot_gtable(test)
+legend = test_table$grob[test_table$name == 'guide-box']
+
+#plot(legend)
+
+legend = test_table$grobs[[15]]
+no_legend_plot = ggarrange(plotlist = list( pca_plot , knn_plot), nrow=2, ncol=1, widths = c(12, 8), heights=c(4, 8))
+
+with_separate_legend_plot = pca_plot + {knn_plot + legend + plot_layout(ncol=2, nrow=1 , widths=c(2,1), heights=c(2,1))} + plot_layout(nrow=2, ncol=1 , widths=c(12,8), heights=c(4,8))
+
+pdf(file = here::here( 'results', 'figures', 'PCA_figure_NO_LEGEND.pdf' ), width=12, height =12 )
+plot(no_legend_plot)
+dev.off()
+
+pdf(file = here::here( 'results', 'figures', 'PCA_figure_WITH_LEGEND.pdf' ), width=12, height =12 )
+plot(with_separate_legend_plot)
+dev.off()
+
+plot(with_separate_legend_plot)
+```
+
+```{r write_table_to_file, include=FALSE}
+out_data = select(samples_subset, sample, knn_cohort)%>%
+  mutate(aaf_code = case_when(
+    knn_cohort == 'AFRICAN' ~ 'aaf_gnomad_afr', 
+    knn_cohort == 'SAS' ~ 'aaf_gnomad_sas', 
+    knn_cohort == 'EAS' ~ 'aaf_gnomad_eas', 
+    knn_cohort == 'NFE' ~ 'aaf_gnomad_nfe',
+    knn_cohort == 'LATINO' ~ 'aaf_gnomad_amr'))
+
+write.table(out_data, file = here::here('output','pca_results',paste('HS_capture_cohort_PCA_assignment_knn',OPTIMIZED_K_VALUE,'.txt',sep='')),row.names=FALSE, quote=FALSE ,sep = '\t')
+```

@@ -1,0 +1,1242 @@
+---
+title: "Rare Variant Burdens Analysis"
+author: "David Morales-Heil"
+date: "3/21/2019"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 5,
+	fig.height = 5
+  #fig.width = 15,
+	#fig.height = 20
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'ggpubr' )
+library( 'gplots' )
+library( 'grid' )
+library( 'gridExtra' )
+library( 'patchwork' )
+library( 'ggrepel' )
+
+#source("http://peterhaschke.com/Code/multiplot.R")
+```
+
+```{r custom_formula_volcano}
+####################
+# ggplot modifiers #
+####################
+gg_bigger_texts = theme(
+  axis.title = element_text( size = 16 ),
+  axis.text = element_text( size = 14 ),
+  legend.text = element_text( size = 14 ),
+  legend.title = element_text( size = 15 ),
+  plot.title = element_text( size = 16 ),
+  strip.text.x = element_text( size = 17, margin = margin( b = 5, t = 5 ) ),
+  strip.text.y = element_text( size = 15 )
+)
+
+gg_multiplot_texts = theme(
+  axis.title = element_text( size = 20 ),
+  axis.text = element_text( size = 18 ),
+  legend.text = element_text( size = 12 ),
+  legend.title = element_text( size = 13 ),
+  plot.title = element_text( size = 20 ),
+  strip.text.x = element_text( size = 16, margin = margin( b = 5, t = 5 ) ),
+  strip.text.y = element_text( size = 15 )
+)
+
+gg_quadplot_smaller_text = theme(
+  axis.title = element_text( size=14 ),
+  axis.text = element_text( size=9 ),
+  plot.title = element_text( size=15 )
+)
+
+gg_reduce_pathway_text = theme(
+    axis.title = element_text( size=14 ),
+    axis.text.y = element_text( size=8 ),
+    axis.text.x = element_text( size=10 ),
+    plot.title = element_text( size=15 )
+)
+
+gg_no_legend = theme(
+  legend.position='none'
+)
+
+gg_no_grid = theme(
+  panel.grid.major = element_blank(),
+  panel.grid.minor = element_blank()
+)
+
+gg_no_x_grid = theme(
+  panel.grid.major.x = element_blank() )
+
+gg_no_y_grid = theme(
+  panel.grid.major.y = element_blank() )
+
+gg_center_title = theme(
+  plot.title = element_text( hjust = 0.5 )
+)
+
+gg_no_x_label = theme(
+  axis.title.x = element_blank()
+)
+
+gg_no_y_label = theme(
+  axis.title.y = element_blank()
+)
+
+gg_angled_x_text = theme (
+  axis.text.x = element_text( angle = 45, vjust = 1, hjust = 1, color = 'black' )
+)
+
+#################
+# volcano plots #
+#################
+make_ggplot_volcano <- function( deg_dataframe, title, axis_steps = 1, fold_change_cutoff = 1.5, qvalue_cutoff = 0.05, max_label = 30 )
+{
+  ##############################
+  # set significance threshold #
+  ##############################
+  deg_dataframe <- deg_dataframe %>%
+    mutate( Significant = case_when(
+      plotting_boncor_p < qvalue_cutoff & abs( FoldChange ) >= fold_change_cutoff ~ "Large",
+      plotting_boncor_p < qvalue_cutoff ~ "Modest",
+      TRUE ~ "Not" ) ) %>%
+    mutate( Significant = factor( Significant, levels=c( "Not", "Modest", "Large" ) ) )
+
+  ################################
+  # set values for square x axis #
+  ################################
+  x_volcano_value <- ( abs( deg_dataframe$log2FoldChange[ is.finite( deg_dataframe$log2FoldChange ) ] ) + 0.051 ) %>%
+    max( . ) %>%
+    round( ., 1 )
+
+  if ( x_volcano_value < 1.0 ) {
+    x_volcano_value = 1.0
+  }
+
+  x_num_for_limits <- round( x_volcano_value, 0 )
+
+  x_volcano_low <- x_volcano_value * -1
+  x_volcano_high <- x_volcano_value
+
+  x_break_list <- seq( -1 * x_num_for_limits, x_num_for_limits, by = axis_steps )
+
+  ##############
+  # plot lines #
+  ##############
+  horizontal_line <- log10( qvalue_cutoff ) * -1
+  vertical_line_1 <- log2( fold_change_cutoff )
+  vertical_line_2 <- vertical_line_1 * -1
+
+  ###################################
+  # actually make the volcano plots #
+  ###################################
+  plot_volcano <- ggplot( deg_dataframe, aes( x=log2FoldChange, y=neg_log_boncor_p, colour=Significant ) ) +
+    scale_colour_manual( values = c( "darkgray", "blue", "red" ) ) +
+    scale_x_continuous( limits = c( x_volcano_low, x_volcano_high ), breaks = x_break_list ) +
+    theme_bw() +
+    gg_bigger_texts +
+    gg_no_legend +
+    gg_no_grid +
+    gg_center_title +
+    #geom_point( size=1.2 ) +
+    geom_point( size = 2.5 ) +
+    geom_hline( yintercept = horizontal_line, linetype=2 ) +
+    geom_vline( xintercept=c( vertical_line_1, vertical_line_2 ), linetype=2 ) +
+    geom_text_repel( 
+      #data=subset( deg_dataframe, Significant == "Large" )[c(1:max_label),], 
+      data = subset( deg_dataframe, neg_log_boncor_p > 0.15 )[c(1:max_label),],
+      colour="black", 
+      aes( label=gene ), 
+      size=3 ) +
+    xlab( parse( text=paste0( "log[2](FoldChange)" ) ) ) +
+    ylab( parse( text = paste0( "-log[10](Adj.~p-value)" ) ) ) +
+    ggtitle( title ) +
+    ylim( 0, 2.5 )
+
+  return( plot_volcano )
+}
+
+```
+
+```{r read_in_files}
+missense_capture_file = here::here(
+  'output',
+  'burdens_results',
+  'MISSENSE_capture_burdens_results.txt')
+
+missense_simulation_file = here::here(
+  'output',
+  'burdens_results',
+  'MISSENSE_simulation_burdens_results.txt')
+
+synonymous_capture_file = here::here(
+  'output',
+  'burdens_results',
+  'SYNONYMOUS_capture_burdens_results.txt')
+
+synonymous_simulation_file = here::here(
+  'output',
+  'burdens_results',
+  'SYNONYMOUS_simulation_burdens_results.txt')
+
+MISSENSE_capture = read.table( file = missense_capture_file,
+                               header = TRUE)
+
+MISSENSE_simulations = read.table( file = missense_simulation_file, 
+                                   header = TRUE)
+
+SYNON_capture = read.table( file = synonymous_capture_file, 
+                           header = TRUE)
+
+SYNON_simulations = read.table( file = synonymous_simulation_file,
+                                header = TRUE)
+
+##
+## I had run the simulations experiments at several different AAF threshold cutoffs.  Ultimately, we decided we were
+## really only interested in analyzing rare-variant (<0.01) burden.
+##
+## Filter the simulations data for other cutoff thresholds...
+##
+
+MISSENSE_capture_01 = filter(MISSENSE_capture, cut_off == 0.01)
+MISSENSE_simulations_01 = filter(MISSENSE_simulations, cut_off == 0.01)
+
+SYNON_capture_01 = filter(SYNON_capture, cut_off == 0.01)
+SYNON_simulations_01 = filter(SYNON_simulations, cut_off == 0.01)
+```
+
+TOTAL_ALTS_ANALYSIS
+
+Here I have created functions to process the simulations results. Alt counts are totaled for the hs-cohort and for the simulated cohort in each cohort simulation.  Then the results from all of 200 of the simulation experiments are summarized to calculate the average alt count (poisson lambda).  Then the observed HS-cohort alt counts are compared to the simulation expectations.
+
+```{r process GNOMAD data}
+total_ALTS_ANALYSIS = function(capture_data,
+                               simulation_data,
+                               capture_or_simulation) {
+  ##
+  ##  Assess Capture data.  Columns #1 and #2 are 'GENE' and 'AAF_threshold' respectively.  Here the threshold is just referencing the AAF
+  ##  cutoff that was used for the counts that are in this row. Every other column is the alt counts from an individual in the capture
+  ##  cohort.  First I create new columns for 'total_alts' and 'total_affected', meaning total number of alt alleles in the entire cohort
+  ##  and total number of individuals with at least one alt in this gene at this AAF cutoff.  I use rowsums() to do this.
+  ##
+  
+  capture_data = mutate(capture_data, hs_total_alts = rowSums(capture_data[, 3:length(colnames(capture_data))]))
+  
+  simulation_data = mutate(simulation_data, total_alts = rowSums(simulation_data[, 4:length(colnames(simulation_data))]))
+  
+  #
+  # Create new smaller tables without all of the individual information
+  #
+  
+  capture_total_alts_summary = select(capture_data, gene, cut_off, hs_total_alts)
+  
+  SIM_total_alts_summary = select(simulation_data, gene, cut_off, total_alts)
+  SIM_total_alts_GROUPED = SIM_total_alts_summary %>% group_by(gene, cut_off)
+  SIM_total_alts_by_group = summarise(SIM_total_alts_GROUPED, sim_avg_alts = mean(total_alts))
+  
+  ## standard deviation for poissonic data is sqrt(lambda)
+  SIM_total_alts_by_group = mutate(SIM_total_alts_by_group, sim_sd_alts =
+                                     sqrt(sim_avg_alts))
+  
+  ##
+  ## Join summary capture data with simulation summary average data.
+  ##
+  
+  
+  TOTAL_ALTS_all_data = left_join(SIM_total_alts_by_group,
+                                  capture_total_alts_summary ,
+                                  c('gene', 'cut_off'))
+  TOTAL_ALTS_all_data = mutate(TOTAL_ALTS_all_data,
+                               hsVsim_sd = (hs_total_alts - sim_avg_alts) / sim_sd_alts) %>%
+    mutate(raw_p = case_when(
+      hs_total_alts > sim_avg_alts ~ ppois(hs_total_alts , lambda = sim_avg_alts, lower = FALSE),
+      TRUE ~ -9
+    ))
+  
+  ##
+  ##  Perform burdens statistical test. Perform poisson statistical testing. Determine Bonferroni correction and apply
+  ##  to raw_p value to generate adj_p value.
+  ##
+  ##  Notes:
+  ##  I am using the simulation average values as the lambda for poisson testing.
+  ##
+  ##  Bonferroni adjusted p_values are calculated by adjusting for the number of genes/domains included
+  ##  in the capture analysis.
+  ##
+  ##  The 'ptest_adj_p' value is a p value corrected by the number of genes/domains for which a statistical
+  ##  test was performed... that is to say, for how many genes/domains where the number of alt observations
+  ##  was greater than the average alt alleles observed in the simulations.  This adjustment is considering
+  ##  one sided statistical testing, as we are not interested in looking for genes that have decreased variant
+  ##  burden. Genes where fewer variants were observed in the capture cohort are just given raw_p values of '-9' for
+  ##  easy filtering/handling later.
+  
+  TOTAL_ALTS_all_data = mutate(TOTAL_ALTS_all_data,
+                               bonferroni_adj_p = case_when(
+                                 raw_p < 0 ~ 1,
+                                 raw_p >= 0 ~ raw_p * length(unique(TOTAL_ALTS_all_data$gene)))) %>%
+    mutate(ptest_correction = raw_p)
+  
+  for (i in 1:length(TOTAL_ALTS_all_data$raw_p)) {
+    if (TOTAL_ALTS_all_data$ptest_correction[i] >= 0) {
+      TOTAL_ALTS_all_data$ptest_correction[i] = length(which(TOTAL_ALTS_all_data$raw_p >= 0 & TOTAL_ALTS_all_data$cut_off == TOTAL_ALTS_all_data$cut_off[i]))
+    }
+    else{
+      TOTAL_ALTS_all_data$ptest_correction[i] = 1
+    }
+  }
+  
+  TOTAL_ALTS_all_data = mutate(TOTAL_ALTS_all_data,
+                               ptest_adj_p = case_when(raw_p < 0 ~ 1,
+                                                       raw_p >= 0 ~ raw_p * ptest_correction))
+  
+  if (capture_or_simulation == 'CAPTURE') {
+    return(TOTAL_ALTS_all_data)
+  } else if (capture_or_simulation == 'SIMULATION') {
+    return(simulation_data)
+  }
+}
+
+#####################
+#####################
+total_AFFECTED_ANALYSIS = function(capture_data,
+                                   simulation_data,
+                                   capture_or_simulation) {
+  ##
+  ## Assess capture and simulations data to figure out the total number of
+  ## affected individuals in the cohort for each simulation.
+  ##
+  
+  capture_data = mutate(capture_data, hs_alt_affected = c(rep(0, length(
+    capture_data$gene))))
+  
+  for (i in 1:length(rownames(capture_data))) {
+    capture_data$hs_alt_affected[i] = length(which(capture_data[i, 3:(length(colnames(capture_data)) - 1)] > 0))
+  }
+  
+  simulation_data = mutate(simulation_data, hs_alt_affected = c(rep(0, length(
+    simulation_data$gene
+  ))))
+  
+  for (i in 1:length(rownames(simulation_data))) {
+    simulation_data$alt_affected[i] = length(which(simulation_data[i, 4:(length(colnames(simulation_data)) - 1)] > 0))
+  }
+  
+  #
+  # Create new smaller table without all of the individual information
+  #
+  
+  capture_total_affected_summary = select(capture_data, gene, cut_off, hs_alt_affected)
+  
+  SIM_total_affected_summary = select(simulation_data, gene, cut_off, alt_affected)
+  SIM_total_affected_GROUPED = SIM_total_affected_summary %>% group_by(gene, cut_off)
+  SIM_total_affected_by_group = summarise(SIM_total_affected_GROUPED,
+                                          sim_avg_affected = mean(alt_affected))
+  
+  SIM_total_affected_by_group = mutate(SIM_total_affected_by_group,
+                                       sim_sd_affected = sqrt(sim_avg_affected))
+  
+  
+  ##
+  ## Join summary capture data with simulation summary average data.
+  ##
+  
+  total_AFFECTED_all_data = left_join(
+    SIM_total_affected_by_group,
+    capture_total_affected_summary,
+    c('gene', 'cut_off')
+  )
+  total_AFFECTED_all_data = mutate(
+    total_AFFECTED_all_data,
+    hsVsim_sd = (hs_alt_affected - sim_avg_affected) / sim_sd_affected
+  ) %>%
+    ######
+  ## is this the right statistical ?  need to change to fishers exact contingency test.
+  #  ####
+  #  #
+  #  #
+  #
+  mutate(raw_p = case_when(
+    hs_alt_affected > sim_avg_affected ~ ppois(hs_alt_affected, lambda = sim_avg_affected , lower = FALSE),
+    TRUE ~ -9
+  ))
+  
+  
+  total_AFFECTED_all_data$bonferroni_adj_p = total_AFFECTED_all_data$raw_p / length(unique(total_AFFECTED_all_data$gene))
+  
+  
+  for (i in 1:length(total_AFFECTED_all_data$raw_p)) {
+    if (total_AFFECTED_all_data$ptest_correction[i] >= 0) {
+      total_AFFECTED_all_data$ptest_correction[i] = length( which( total_AFFECTED_all_data$raw_p >= 0 & total_AFFECTED_all_data$cut_off == total_AFFECTED_all_data$cut_off[i] ) )
+    }
+    else{
+      total_AFFECTED_all_data$ptest_correction[i] = 1
+    }
+  }
+  
+  total_AFFECTED_all_data = mutate(total_AFFECTED_all_data, ptest_adj_p = raw_p * ptest_correction)
+  
+  
+  if (capture_or_simulation == 'CAPTURE') {
+    return(total_AFFECTED_all_data)
+  } else if (capture_or_simulation == 'SIMULATION') {
+    return(total_AFFECTED_all_data)
+  }
+}
+```
+
+
+```{r fig.width=4,fig.height=4 }
+##
+## Run burdens analysis functions on missense and synonymous simulations data.
+##
+
+CAPTURE_missense_ALTS_data = total_ALTS_ANALYSIS(
+  MISSENSE_capture_01,
+  MISSENSE_simulations_01,
+  'CAPTURE')
+CAPTURE_synonymous_ALTS_data = total_ALTS_ANALYSIS(
+  SYNON_capture_01,
+  SYNON_simulations_01,
+  'CAPTURE')
+
+SIM_missense_ALTS_data = total_ALTS_ANALYSIS(
+  MISSENSE_capture_01, 
+  MISSENSE_simulations_01,
+  'SIMULATION')
+SIM_synonymous_ALTS_data = total_ALTS_ANALYSIS(
+  SYNON_capture_01, 
+  SYNON_simulations_01, 
+  'SIMULATION')
+```
+
+```{r simulation distribution plots, fig.width=12, fig.height=5}
+##
+## Create plots where each gene/domain analyzed is on the x-axis.  For each gene/domain plot all
+## simulation total alt counts in black dots, and then plot the observed HS-cohort alt count
+## for each gene in color.
+##
+
+SIM_missense_ALTS_data = ungroup(SIM_missense_ALTS_data) %>%
+  mutate(gene = as.character(gene)) %>%
+  mutate(
+    gene = case_when(
+      !(grepl('DOMAIN', gene)) ~ gene,
+      gene == 'PSTPIP1_SH3_DOMAIN' ~ 'PSTPIP1_SH3',
+      gene == 'PSTPIP1_CDC15_DOMAIN' ~ 'PSTPIP1_CDC15',
+      gene == 'PSTPIP1_FCH_DOMAIN' ~ 'PSTPIP1_FCH',
+      gene == 'PSTPIP1_PEST_DOMAIN' ~ 'PSTPIP1_PEST' ,
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(gene = as.factor(gene))
+
+CAPTURE_missense_ALTS_data = ungroup(CAPTURE_missense_ALTS_data) %>%
+  mutate(gene = as.character(gene)) %>%
+  mutate(
+    gene = case_when(
+      !(grepl('DOMAIN', gene)) ~ gene,
+      gene == 'PSTPIP1_SH3_DOMAIN' ~ 'PSTPIP1_SH3',
+      gene == 'PSTPIP1_CDC15_DOMAIN' ~ 'PSTPIP1_CDC15',
+      gene == 'PSTPIP1_FCH_DOMAIN' ~ 'PSTPIP1_FCH',
+      gene == 'PSTPIP1_PEST_DOMAIN' ~ 'PSTPIP1_PEST' ,
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(gene = as.factor(gene))
+
+SIM_synonymous_ALTS_data = ungroup(SIM_synonymous_ALTS_data) %>%
+  mutate(gene = as.character(gene)) %>%
+  mutate(
+    gene = case_when(
+      !(grepl('DOMAIN', gene)) ~ gene,
+      gene == 'PSTPIP1_SH3_DOMAIN' ~ 'PSTPIP1_SH3',
+      gene == 'PSTPIP1_CDC15_DOMAIN' ~ 'PSTPIP1_CDC15',
+      gene == 'PSTPIP1_FCH_DOMAIN' ~ 'PSTPIP1_FCH',
+      gene == 'PSTPIP1_PEST_DOMAIN' ~ 'PSTPIP1_PEST' ,
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(gene = as.factor(gene))
+
+
+CAPTURE_synonymous_ALTS_data = ungroup(CAPTURE_synonymous_ALTS_data) %>%
+  mutate(gene = as.character(gene)) %>%
+  mutate(
+    gene = case_when(
+      !(grepl('DOMAIN', gene)) ~ gene,
+      gene == 'PSTPIP1_SH3_DOMAIN' ~ 'PSTPIP1_SH3',
+      gene == 'PSTPIP1_CDC15_DOMAIN' ~ 'PSTPIP1_CDC15',
+      gene == 'PSTPIP1_FCH_DOMAIN' ~ 'PSTPIP1_FCH',
+      gene == 'PSTPIP1_PEST_DOMAIN' ~ 'PSTPIP1_PEST' ,
+      TRUE ~ NA_character_
+    )
+  ) %>%
+  mutate(gene = as.factor(gene))
+
+missense_distributions_plot = ggplot() +
+  theme_bw() +
+  geom_jitter(
+    data = SIM_missense_ALTS_data,
+    aes(x = gene , y = total_alts),
+    width = 0.15,
+    height = 0,
+    color = 'black',
+    size = 0.5
+  ) +
+  geom_point(
+    data = CAPTURE_missense_ALTS_data,
+    aes(x = gene , y = hs_total_alts),
+    color = 'red',
+    size = 1.5
+  ) +
+  xlab('') +
+  ylab("Number of Alt Alleles Observed\n") +
+  ggtitle('PROTEIN AFFECTING VARIANTS') +
+  theme(
+    axis.text.x = element_text(
+      angle = 90,
+      hjust = 1,
+      vjust = 0.5,
+      size = 12
+    ),
+    axis.text.y = element_text(size = 14) ,
+    axis.title.y = element_text(size = 17),
+    plot.title = element_text(size = 18, hjust = 0.5)
+  )
+
+synonymous_distributions_plot = ggplot() +
+  theme_bw() +
+  geom_jitter(
+    data = SIM_synonymous_ALTS_data,
+    aes(x = gene , y = total_alts),
+    width = 0.15,
+    height = 0,
+    color = 'black',
+    size = 0.5
+  ) +
+  geom_point(
+    data = CAPTURE_synonymous_ALTS_data,
+    aes(x = gene , y = hs_total_alts),
+    color = 'green',
+    size = 1.5
+  ) +
+  xlab('') +
+  ylab("Number of Alt Alleles Observed\n") +
+  ggtitle('SYNONYMOUS VARIANTS') +
+  theme(
+    axis.text.x = element_text(
+      angle = 90,
+      hjust = 1,
+      vjust = 0.5,
+      size = 12
+    ),
+    axis.text.y = element_text(size = 14) ,
+    axis.title.y = element_text(size = 17),
+    plot.title = element_text(size = 18, hjust = 0.5)
+  )
+```
+
+
+```{r fig.width = 6, fig.height = 5, standard_deviations_plot}
+##
+##
+## Generate summary statistic plots for comparing HS-cohort results to simulation expectations.
+##
+## Plot standard deviations away from simulations mean that the HS cohort was for each gene in the missense/synonymous categories.
+##
+## Plot out adjusted p values comparing HS-cohort to simulation expectations for missense and synonymous variants.
+##
+## *** NOTE ***  I have a position jitter coded into the plotting. But I also have a plot where I label the statistically significant
+## data point as the PSTPIP1_SH3_DOMAIN.  Because of this, the text and the data point don't always line up nicely.  You may need to
+## run the plotting code multiple times to get a visually nice lineup of the 'PSTPIP1_SH3_DOMAIN' text with the data point... or recode
+## the plotting so that you don't have to deal with this randomness.
+##
+
+CAPTURE_missense_ALTS_data = mutate(CAPTURE_missense_ALTS_data , variant_type = c(rep(
+  'MISSENSE', length(CAPTURE_missense_ALTS_data$gene)
+))) %>%
+  mutate(variant_type = factor(variant_type , levels = c('MISSENSE' , 'SYNONYMOUS'))) %>%
+  mutate(plotting_boncor_p = case_when(
+    bonferroni_adj_p >= 1.0 ~ 1.0,
+    bonferroni_adj_p < 1.0 ~ bonferroni_adj_p)) %>%
+  mutate(plotting_raw_p = case_when(
+    raw_p < 0 ~ 1.0,
+    raw_p > 1.0 ~ 1.0,
+    TRUE ~ raw_p )) %>%
+  mutate( neg_log_boncor_p = -log10( plotting_boncor_p ) ) %>%
+  mutate( neg_log_raw_p = -log10( plotting_raw_p )) %>%
+  mutate( FoldChange = hs_total_alts / sim_avg_alts ) %>%
+  mutate( log2FoldChange = log2( FoldChange ) )
+
+CAPTURE_synonymous_ALTS_data = mutate(CAPTURE_synonymous_ALTS_data , variant_type = c(rep(
+  'SYNONYMOUS', length(CAPTURE_missense_ALTS_data$gene)
+))) %>%
+  mutate(variant_type = factor(variant_type , levels = c('MISSENSE' , 'SYNONYMOUS'))) %>%
+  mutate(plotting_boncor_p = case_when(
+    bonferroni_adj_p >= 1.0 ~ 1.0,
+    bonferroni_adj_p < 1.0 ~ bonferroni_adj_p)) %>%
+  mutate(plotting_raw_p = case_when(
+    raw_p < 0 ~ 1.0,
+    raw_p > 1.0 ~ 1.0,
+    TRUE ~ raw_p )) %>%
+  mutate( neg_log_boncor_p = -log10( plotting_boncor_p ) ) %>%
+  mutate( neg_log_raw_p = -log10( plotting_raw_p )) %>%
+  mutate( FoldChange = hs_total_alts / sim_avg_alts ) %>%
+  mutate( log2FoldChange = log2( FoldChange ) )
+
+standard_deviations_plot = ggplot() +
+  theme_bw() +
+  geom_jitter(
+    data = CAPTURE_missense_ALTS_data,
+    aes(x = variant_type , y = hsVsim_sd) ,
+    color = 'black',
+    width = 0.15,
+    height = 0,
+    size = 2.5
+  ) +
+  geom_jitter(
+    data = CAPTURE_synonymous_ALTS_data,
+    aes(x = variant_type , y = hsVsim_sd) ,
+    color = 'black',
+    width = 0.15,
+    height = 0,
+    size = 2.5
+  ) +
+  theme(
+    axis.text.x = element_text(
+      hjust = 0.5 ,
+      vjust = 0.5 ,
+      size = 14
+    ),
+    axis.text.y = element_text(size = 14),
+    axis.title.y = element_text(size = 16)
+  ) +
+  xlab('') +
+  ylab('Standard Deviations From Simulation Mean\n') +
+  geom_hline(yintercept = 0)
+
+plot(standard_deviations_plot)
+
+## adjusted p v1 - dmh version
+adjusted_p_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = CAPTURE_missense_ALTS_data,
+    aes(x = variant_type , y = plotting_boncor_p) ,
+    color = 'black',
+    position = position_jitter(width = 0.15) ,
+    size = 2.5
+  ) +
+  geom_point(
+    data = CAPTURE_synonymous_ALTS_data,
+    aes(x = variant_type, y = plotting_boncor_p) ,
+    color = 'black',
+    position = position_jitter(width = 0.15) ,
+    size = 2.5
+  ) +
+  geom_text(
+    data = filter(CAPTURE_missense_ALTS_data , gene == 'PSTPIP1_SH3') ,
+    aes(x = variant_type , y = plotting_boncor_p , label = gene) ,
+    hjust = 1 ,
+    vjust = 0.5,
+    size = 3.5 ,
+    nudge_x = -0.08
+  ) +
+  theme(
+    axis.text.x = element_text(
+      hjust = 0.5 ,
+      vjust = 0.5 ,
+      size = 14
+    ),
+    axis.text.y = element_text(size = 14),
+    axis.title.y = element_text(size = 16)
+  ) +   xlab('') +
+  ylab('Adjusted P Value\n') +
+  scale_y_log10() +
+  geom_hline(yintercept = 0.05, linetype = 'dashed')
+
+plot(adjusted_p_plot)
+
+## adjusted p v2 - -log10
+adjusted_p_plot_v2 = ggplot() +
+  theme_bw() +
+  geom_jitter(
+    data = CAPTURE_missense_ALTS_data,
+    aes(x = variant_type , y = neg_log_boncor_p),
+    color = 'black' ,
+    width = 0.15,
+    height = 0,
+    size = 2.5
+  ) +
+  geom_jitter(
+    data = CAPTURE_synonymous_ALTS_data,
+    aes(x = variant_type , y = neg_log_boncor_p) ,
+    color = 'black',
+    width = 0.15,
+    height = 0,
+    size = 2.5
+  ) +
+  geom_text_repel( 
+    #data = filter(CAPTURE_missense_ALTS_data , gene == 'PSTPIP1_SH3'),
+    data = filter( CAPTURE_missense_ALTS_data, neg_log_boncor_p > 0.25 ),
+    aes( x = variant_type, y = neg_log_boncor_p, label = gene ),
+    size = 3.5 ) +
+  geom_text_repel( 
+    #data = filter(CAPTURE_missense_ALTS_data , gene == 'PSTPIP1_SH3'),
+    data = filter( CAPTURE_synonymous_ALTS_data, neg_log_boncor_p > 0.25 ),
+    aes( x = variant_type, y = neg_log_boncor_p, label = gene ),
+    size = 3.5 ) +
+  # geom_text(
+  #   data = filter(CAPTURE_missense_ALTS_data , gene == 'PSTPIP1_SH3') ,
+  #   aes(x = variant_type , y = neg_log_boncor_p, label = gene) ,
+  #   hjust = 1 ,
+  #   vjust = 0.5,
+  #   size = 3.5 ,
+  #   nudge_x = -0.17
+  # ) +
+  theme(
+    axis.text.x = element_text(
+      hjust = 0.5 ,
+      vjust = 0.5 ,
+      size = 14
+    ),
+    axis.text.y = element_text(size = 14),
+    axis.title.y = element_text(size = 16)
+  ) +   
+  xlab('') +
+  ylab( parse( text = paste0( "-log[10](Adj.~p-value)" ) ) ) +
+  geom_hline(yintercept = -log10( 0.05 ), linetype = 'dashed')
+
+plot(adjusted_p_plot_v2)
+
+bonferroni_correction = length(unique(CAPTURE_missense_ALTS_data$gene))
+
+## ## ## ## ## ## ## ## ## ## ## ## ## ## ## 
+
+p_values_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = CAPTURE_missense_ALTS_data,
+    aes(x = variant_type , y = plotting_raw_p) ,
+    color = 'black' ,
+    position = position_jitter(width = 0.15) ,
+    size = 2.5
+  ) +
+  geom_point(
+    data = CAPTURE_synonymous_ALTS_data,
+    aes(x = variant_type , y = plotting_raw_p) ,
+    color = 'black',
+    position = position_jitter(width = 0.15) ,
+    size = 2.5
+  ) +
+  geom_text(
+    data = filter(CAPTURE_missense_ALTS_data , gene == 'PSTPIP1_SH3') ,
+    aes(x = variant_type , y = plotting_raw_p , label = gene) ,
+    hjust = 1 ,
+    vjust = 0.5,
+    size = 3.5 ,
+    nudge_x = -0.1
+  ) +
+  theme(axis.text.x = element_text(
+    hjust = 0.5 ,
+    vjust = 0.5 ,
+    size = 12
+  )) +
+  xlab('') +
+  ylab('Raw P Value') +
+  scale_y_log10() +
+  geom_hline(yintercept = 0.05 , linetype = 'dashed') +
+  geom_hline(yintercept = (0.05 / bonferroni_correction) ,
+             linetype = 'dotted')
+
+plot(p_values_plot)
+```
+
+GENERATING   COMBINED   PLOTS   FOR   FIGURE
+
+```{r fig.width=12, fig.height = 12}
+combined_distributions_plot = ggarrange(
+  plotlist = list(missense_distributions_plot, synonymous_distributions_plot),
+  ncol = 1,
+  nrow = 2,
+  labels = c('a', 'b')
+)
+
+plot(combined_distributions_plot)
+```
+
+
+```{r fig.width=12, fig.height = 6}
+combined_stats_plot = ggarrange(
+  plotlist = list(standard_deviations_plot, adjusted_p_plot),
+  ncol = 2,
+  nrow = 1,
+  labels = c('c', 'd')
+)
+
+plot(combined_stats_plot)
+#plot(combined_stats_plot)
+
+combined_stats_plot_v2 = ggarrange(
+  plotlist = list(standard_deviations_plot, adjusted_p_plot_v2),
+  ncol = 2,
+  nrow = 1,
+  labels = c('c', 'd')
+)
+
+plot( combined_stats_plot_v2 )
+```
+
+```{r volcanos}
+synonymous_volcano <- make_ggplot_volcano( CAPTURE_synonymous_ALTS_data, 
+                                           title = 'SYNONYMOUS VARIANTS')
+  
+missense_volcano <- make_ggplot_volcano( CAPTURE_missense_ALTS_data, 
+                                         title = "PROTEIN AFFECTING VARIANTS")
+
+combined_volcanos = ggarrange(
+  plotlist = list(missense_volcano, synonymous_volcano ),
+  ncol = 2,
+  nrow = 1,
+  labels = c('c', 'd')
+)
+```
+
+```{r fig.width=12, fig.height = 18}
+burdens_figure = combined_distributions_plot + combined_stats_plot + plot_layout(
+  ncol = 1,
+  nrow = 2,
+  heights = c(2, 1),
+  widths = c(1, 1)
+)
+
+plot(burdens_figure)
+
+burdens_figure_file = here::here('results', 'burdens_evaluation_figure.pdf')
+
+pdf(file = burdens_figure_file,
+    height = 18,
+    width = 12)
+plot(burdens_figure)
+dev.off()
+
+#########################
+burdens_figure_v2 = combined_distributions_plot + combined_stats_plot_v2 + plot_layout(
+  ncol = 1,
+  nrow = 2,
+  heights = c(2, 1),
+  widths = c(1, 1)
+)
+
+plot(burdens_figure_v2)
+
+burdens_figure_file = here::here('results', 'burdens_evaluation_figure_v2.pdf')
+
+pdf(file = burdens_figure_file,
+    height = 18,
+    width = 12)
+plot(burdens_figure_v2)
+dev.off()
+
+#########################
+burdens_figure_v3 = combined_distributions_plot + combined_volcanos + plot_layout(
+  ncol = 1,
+  nrow = 2,
+  heights = c(2, 1),
+  widths = c(1, 1)
+)
+
+plot( burdens_figure_v3 )
+
+burdens_figure_file = here::here('results', 'burdens_evaluation_figure_v3.pdf')
+
+pdf(file = burdens_figure_file,
+    height = 18,
+    width = 12)
+plot(burdens_figure_v3)
+dev.off()
+```
+
+```{r QQplot analysis, fig.width = 6, fig.height = 6}
+qq_missense_frame = select(CAPTURE_missense_ALTS_data,
+                           gene,
+                           hs_total_alts,
+                           sim_avg_alts,
+                           raw_p,
+                           variant_type) %>%
+  mutate(qq_p = ppois(hs_total_alts, lambda = sim_avg_alts, lower = FALSE))
+
+qq_synonymous_frame = select(
+  CAPTURE_synonymous_ALTS_data,
+  gene,
+  hs_total_alts,
+  sim_avg_alts,
+  raw_p,
+  variant_type
+) %>%
+  mutate(qq_p = ppois(hs_total_alts, lambda = sim_avg_alts, lower = FALSE))
+
+all_qq_frame = full_join(qq_missense_frame, qq_synonymous_frame)
+
+qq_frame = data.frame('observed' = sort(-log10(all_qq_frame$qq_p)))
+expected = ppoints(length(qq_frame$observed))
+qq_frame = mutate(qq_frame , 'expected' = sort(-log10(expected)))
+
+qq_plot = ggplot() +
+  theme_bw() +
+  geom_point(data = qq_frame , aes(x = expected , y = observed) , size = 2) +
+  geom_abline(aes(intercept = 0, slope = 1),
+              color = 'black',
+              linetype = 'dashed') +
+  scale_x_continuous(limits = c(0, 5)) +
+  scale_y_continuous(limits = c(0, 5)) +
+  geom_hline(yintercept = -log10(0.05 / length(unique(CAPTURE_missense_ALTS_data$gene))),
+  linetype = 'dotted') +
+  ylab('-log10(p) OBSERVED\n') +
+  xlab('\n-log10(p) EXPECTED') +
+  theme(
+    axis.text = element_text(size = 14),
+    axis.title = element_text(size = 16) ,
+    plot.title = element_text(size = 18, hjust = 0.5)
+  ) +
+  ggtitle('MISSENSE + SYNONYMOUS QQ-Plot\n')
+
+qq_file = here::here('results', 'missense_AND_synonymous_qqplot.pdf')
+pdf(file = qq_file,
+    height = 6,
+    width = 6)
+plot(qq_plot)
+dev.off()
+```
+
+```{r  fig.height=4, fig.width=4 , poisson_quality_control}
+##
+##
+## This code was just written to look at whether or not our simulations data actually
+## looks to be a poisson distribution. Basically what this function does is compares
+## the simulations results to what distributions would be expected to be observed based
+## on the poisson lambda (simulation mean alt count) generated by the simulation data.
+##
+## For each gene:
+## Identify all of the unique alt allele counts that were generated in the 200 simulations
+## that were performed, ie, maybe we saw simulations where 0,1, 2, 3, 4, 5, or 6 alt alleles
+## were observed; where the lambda was 3.5.
+##
+## Determine the TRUE expected number of times you would expect to see each of these unique
+## total alt counts when running 200 simulations.
+##
+## Compare the poisson expectation to the actual number of times we observed each of those
+## unique total alt counts over the entirety of our 200 simulations.
+##
+## Plot out POISSON vs SIMULATION OBSERVATIONS.
+## Write out a table with chi-square statistics results about whether differences between
+## our observations and the poisson expectation was statistically significant.
+##
+##
+
+simmulation_poisson_plotting = function(input_data) {
+  CURRENT_DATA_SET = input_data
+  CURRENT_DATA_SET$CHI_P = c(rep(-9 , length(rownames(CURRENT_DATA_SET))))
+  
+  LINE_current_plot_list = list(rep(1, length(unique(CURRENT_DATA_SET$gene))))
+  CURVE_current_plot_list = list(rep(1, length(unique(CURRENT_DATA_SET$gene))))
+  
+  for (i in 1:length(unique(CURRENT_DATA_SET$gene))) {
+    curr_gene = unique(CURRENT_DATA_SET$gene)[i]
+    
+    number_of_simulations = length(CURRENT_DATA_SET$total_alts[CURRENT_DATA_SET$gene == curr_gene])
+    
+    ##
+    ## Identify all of the unique total alt counts that were observed over the 200 simulations.
+    
+    curr_values = sort(unique(CURRENT_DATA_SET$total_alts[CURRENT_DATA_SET$gene == curr_gene]))
+    
+    temp_lambda = mean(CURRENT_DATA_SET$total_alts[CURRENT_DATA_SET$gene == curr_gene])
+    
+    ##
+    ## Determine what the TRUE poisson expectation would be for the number of times you would
+    ## expect to see each of the unique total alt counts that were observed in our simulations.
+    
+    curr_pois_density = dpois(curr_values , temp_lambda)
+    curr_pois_predicted_observations = curr_pois_density * number_of_simulations
+    
+    observed = c(rep(-9 , length(curr_values)))
+    
+    pois_frame = data.frame('observed_alts' = observed ,
+                            'expected_pois_counts' = curr_pois_predicted_observations)
+    row.names(pois_frame) = curr_values
+    
+    ##
+    ## Fill in the data frame with the number of simulations in which each of the unique total
+    ## alt counts were observed in our simulations.
+    
+    for (j in 1:length(curr_values)) {
+      pois_frame$observed_alts[j] = length(which(CURRENT_DATA_SET[CURRENT_DATA_SET$gene == curr_gene ,]$total_alts == curr_values[j]))
+    }
+    
+    ###
+    ### evaluate chi-square test to see if simulated data distribution is different from poisson expectation
+    
+    #print(pois_frame)
+    
+    curr_chi_p = chisq.test(pois_frame)$p.value
+    
+    CURRENT_DATA_SET$CHI_P[CURRENT_DATA_SET$gene == curr_gene] = curr_chi_p
+    
+    ###
+    ### plot observed density vs expected poisson curve
+    
+    pois_frame$values = as.numeric(rownames(pois_frame))
+    
+    line_temp_plot = ggplot() +
+      theme_bw() +
+      ggtitle(curr_gene) +
+      theme(plot.title = element_text(hjust = 0.5)) +
+      geom_point(
+        data = pois_frame,
+        aes(x = expected_pois_counts, y = observed_alts),
+        size = 2.5
+      ) +
+      geom_abline(aes(intercept = 0, slope = 1), linetype = 'dashed') +
+      xlab('Expected') +
+      ylab('Observed') +
+      theme(axis.text = element_text(size = 14) ,
+            plot.title = element_text(size = 16))
+    
+    curve_temp_plot = ggplot() +
+      theme_bw() +
+      ggtitle(curr_gene) +
+      theme(plot.title = element_text(hjust = 0.5)) +
+      geom_point(
+        data = pois_frame,
+        aes(x = values , y = observed_alts),
+        color = 'black',
+        size = 2.5
+      ) +
+      geom_point(
+        data = pois_frame,
+        aes(x = values, y = expected_pois_counts),
+        color = 'red',
+        size = 2.5
+      ) +
+      xlab('Number Of Alts') +
+      ylab('Observations') +
+      theme(axis.text = element_text(size = 14),
+            plot.title = element_text(size = 16))
+    
+    LINE_current_plot_list[[i]] = line_temp_plot
+    CURVE_current_plot_list[[i]] = curve_temp_plot
+    
+  }
+  
+  linear_combined_plots = ggarrange(plotlist = LINE_current_plot_list,
+                                    ncol = 6,
+                                    nrow = 6)
+  curved_combined_plots = ggarrange(plotlist = CURVE_current_plot_list,
+                                    ncol = 6,
+                                    nrow = 6)
+  
+  plot(linear_combined_plots)
+  plot(curved_combined_plots)
+  
+  poisson_line_file = here::here('results', 'simulation_vs_poisson_LINEAR_plots.pdf')
+  pdf(file = poisson_line_file,
+      width = 24,
+      height = 24)
+  plot(linear_combined_plots)
+  dev.off()
+  
+  poisson_curve_file = here::here('results', 'simulation_vs_poisson_CURVES_plots.pdf')
+  pdf(file = poisson_curve_file,
+      width = 24,
+      height = 24)
+  plot(curved_combined_plots)
+  dev.off()
+  
+  return(CURRENT_DATA_SET)
+}
+```
+
+```{r fig.height=30, fig.width=30}
+SIM_MISSENSE_chiP_out_frame = simmulation_poisson_plotting(SIM_missense_ALTS_data)
+
+chi_test_summary_frame = select(SIM_MISSENSE_chiP_out_frame, gene, simulation, CHI_P) %>%
+  filter(simulation == 1) %>%
+  select(gene, CHI_P)
+
+chi_test_table_file = here::here('results', 'chi_quare_simulation_vs_poisson_table.txt')
+write.table(
+  chi_test_summary_frame,
+  file = chi_test_table_file,
+  row.names = FALSE,
+  quote = FALSE,
+  sep = '\t'
+)
+```
+
+```{r fig.width=4, fig.height=4}
+###
+###
+###  Why 200 simulations?  Originally I had picked because it seemed like a decent number of simulations to get
+###  a distribution of total alt allele expectations, but it wasn't soooooooo many simulations that it was
+###  a huge computational time-sink.
+###
+###  Here I look a little more into whether 200 was a good number.  I plot the mean(total_alt_count) as a function
+###  of the number of simulations performed. In otherwords, the x-axis will be 1-200. The y-axis is mean total alt
+###  count.  The value at x=5 will be the mean(total_alt_counts) of simulations #1-5. The value at x=10 will be the
+###  mean(total_alt_counts) for simulations #1-10. Etc., etc., etc...
+###
+###  You can see that for almost all of the genes/domains analyzed, the lambda value has flattened out by 200 simulations
+###  suggesting that 200 is a pretty good number.
+###
+###
+sim_alts = SIM_missense_ALTS_data$total_alts
+
+simulations_eval_frame = select(SIM_missense_ALTS_data, gene, simulation, total_alts) %>%
+  mutate(num_of_sims = simulation)
+
+simulations_eval_frame$sim_lambda = c(rep(0, length(SIM_missense_ALTS_data$total_alts)))
+
+for (i in 1:length(simulations_eval_frame$simulation)) {
+  #print(temp_gene)
+  temp_gene = simulations_eval_frame$gene[i]
+  
+  simulations_eval_frame$sim_lambda[i] = mean(simulations_eval_frame$total_alts[simulations_eval_frame$gene == temp_gene &
+                                                                                  simulations_eval_frame$simulation <= simulations_eval_frame$simulation[i]])
+  
+  #print(simulations_eval_frame$total_alts[simulations_eval_frame$gene == temp_gene && simulations_eval_frame$simulation <= simulations_eval_frame$simulation[i]])
+}
+
+gene_list = unique(simulations_eval_frame$gene)
+lambda_plot_list = list(rep(1, length(gene_list)))
+
+for (i in 1:length(gene_list)) {
+  temp_gene = gene_list[i]
+  
+  temp_frame = filter(simulations_eval_frame, gene == temp_gene)
+  
+  temp_plot = ggplot() +
+    theme_bw() +
+    ggtitle(temp_gene) +
+    theme(plot.title = element_text(hjust = 0.5)) +
+    geom_point(
+      data = temp_frame,
+      aes(x = simulation , y = sim_lambda),
+      color = 'black',
+      size = 1
+    ) +
+    xlab('# of Simulations') +
+    ylab('Mean Alts') +
+    theme(
+      axis.text = element_text(size = 12),
+      axis.title = element_text(size = 14),
+      plot.title = element_text(size = 14)
+    )
+  
+  lambda_plot_list[[i]] = temp_plot
+  
+  plot(temp_plot)
+  
+}
+```
+
+```{r fig.width=24 , fig.height=24}
+final_plot = ggarrange(plotlist = lambda_plot_list,
+                       nrow = 6,
+                       ncol = 6)
+
+plot(final_plot)
+
+#plot(final_plot)
+
+simulation_mean_file = here::here('results', 'effect_of_simulation_number_on_lambda.pdf')
+
+pdf(file = simulation_mean_file,
+    width = 24,
+    height = 24)
+plot(final_plot)
+dev.off()
+```
+
+```{r write_table_to_file, include=FALSE}
+##
+##
+## Data output
+##
+##
+
+capture_MISSENSE_out_data = select(
+  CAPTURE_missense_ALTS_data,
+  'Gene' = gene,
+  'Observed_Alts' = hs_total_alts,
+  'Avg_Simulated_Alts' = sim_avg_alts,
+  'Simulation_Alt_Stdev' = sim_sd_alts,
+  'OBS_SD_from_SIM_AVG' = hsVsim_sd,
+  'Raw_P' = plotting_raw_p,
+  'Adj_P' = bonferroni_adj_p
+)
+
+capture_SYNONYMOUS_out_data = select(
+  CAPTURE_synonymous_ALTS_data,
+  'Gene' = gene,
+  'Observed_Alts' = hs_total_alts,
+  'Avg_Simulated_Alts' = sim_avg_alts,
+  'Simulation_Alt_Stdev' = sim_sd_alts,
+  'OBS_SD_from_SIM_AVG' = hsVsim_sd,
+  'Raw_P' = plotting_raw_p,
+  'Adj_P' = bonferroni_adj_p
+)
+
+missense_out_file = here::here('results', 'missense_burdens_table_summary.txt')
+synonymous_out_file = here::here('results', 'synonymous_burdens_table_summary.txt')
+
+write.table(
+  capture_MISSENSE_out_data,
+  file = missense_out_file,
+  row.names = FALSE,
+  quote = FALSE,
+  sep = '\t'
+)
+write.table(
+  capture_SYNONYMOUS_out_data,
+  file = synonymous_out_file,
+  row.names = FALSE,
+  quote = FALSE,
+  sep = '\t'
+)
+```

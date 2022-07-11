@@ -1,0 +1,147 @@
+---
+title: "Manual population correction comparison"
+author: "David Morales-Heil"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 5.5,
+	fig.height = 4.25
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'grid' )
+library( 'gridExtra' )
+library( 'patchwork' )
+library( 'tidyverse' )
+library( 'copynumber' )
+```
+
+In 02.3 of the CNV analysis, I performed a manual correction to change the [0,2,4] copy CNV populations in batch#1 and batch#2 to [0,1,2] copy populations.  This code just is for comparing the CNV call distributions before and after that correction for each batch.
+
+
+```{r }
+#ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_MANUAL_CNV_ID.txt
+
+cnv_BATCH1_file = here::here('output','mDiGS_CNV', paste('BATCH_1' , 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_') )  
+  
+cnv_BATCH2_file = here::here('output','mDiGS_CNV', paste('BATCH_2' , 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_') )  
+
+cnv_BATCH3_file = here::here('output','mDiGS_CNV', paste('BATCH_3' , 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_') )  
+
+CORRECTED_cnv_BATCH1_file = here::here('output','mDiGS_CNV', paste('manual_cnv_correction' , 'BATCH_1' , 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_') )
+  
+CORRECTED_cnv_BATCH3_file = here::here('output','mDiGS_CNV', paste('manual_cnv_correction' , 'BATCH_3' , 'ALL_GENES_COMPILED_filtered_SMOOTHED_CNV_copy_number_calls_TWO_STAGE_CNV_FILTER.txt', sep='_') )
+
+batch1_data = read.table(file = cnv_BATCH1_file, header=TRUE)
+batch2_data = read.table(file = cnv_BATCH2_file, header=TRUE)
+batch3_data = read.table(file = cnv_BATCH3_file, header=TRUE)
+CORRECTED_batch1_data = read.table(file = CORRECTED_cnv_BATCH1_file, header=TRUE)
+CORRECTED_batch3_data = read.table(file = CORRECTED_cnv_BATCH3_file, header=TRUE)
+```
+
+```{r }
+convert_CNV_distributions = function( cnv_frame , batch) {
+  
+  cnv_frame$GENE=as.character(cnv_frame$GENE)
+  
+  cnv_frame$BATCH = c(rep(batch,length(row.names(cnv_frame))))
+  
+  cnv_frame$CNV_ID = c(rep(-9,length(row.names(cnv_frame))))
+  
+  for (i in 1:length(row.names(cnv_frame))) {
+    cnv_frame$CNV_ID[i] = paste('CNV', i , sep="_")
+  }
+  
+  cnv_melt = melt( cnv_frame, id.vars=c('chrom','arm','start.pos','end.pos','n.probes','GENE','BATCH','CNV_ID'),variable.name='SAMPLE', value.name='CNV_COPIES',na.rm=FALSE) 
+  
+  cnv_melt$zero_copies = c(rep(-9,length(cnv_melt$chrom)))
+  cnv_melt$one_copies = c(rep(-9,length(cnv_melt$chrom)))
+  cnv_melt$two_copies = c(rep(-9,length(cnv_melt$chrom)))
+  cnv_melt$three_copies = c(rep(-9,length(cnv_melt$chrom)))
+  cnv_melt$four_copies = c(rep(-9,length(cnv_melt$chrom)))
+  cnv_melt$five_copies = c(rep(-9,length(cnv_melt$chrom)))
+  
+  for (i in 1:length(cnv_melt$chrom)) {
+  
+    temp_CNV = cnv_melt$CNV_ID[i]
+    
+    cnv_melt$zero_copies[i] = length(cnv_melt$CNV_COPIES[(cnv_melt$CNV_COPIES == 0) & (cnv_melt$CNV_ID == temp_CNV)])
+    cnv_melt$one_copies[i] = length(cnv_melt$CNV_COPIES[(cnv_melt$CNV_COPIES == 1) & (cnv_melt$CNV_ID == temp_CNV)])
+    cnv_melt$two_copies[i] = length(cnv_melt$CNV_COPIES[(cnv_melt$CNV_COPIES == 2) & (cnv_melt$CNV_ID == temp_CNV)])
+    cnv_melt$three_copies[i] = length(cnv_melt$CNV_COPIES[(cnv_melt$CNV_COPIES == 3) & (cnv_melt$CNV_ID == temp_CNV)])
+    cnv_melt$four_copies[i] = length(cnv_melt$CNV_COPIES[(cnv_melt$CNV_COPIES == 4) & (cnv_melt$CNV_ID == temp_CNV)])
+    cnv_melt$five_copies[i] = length(cnv_melt$CNV_COPIES[(cnv_melt$CNV_COPIES == 5) & (cnv_melt$CNV_ID == temp_CNV)])
+    
+  }  
+  
+  CNV_DISTRIBUTIONS_grouped = group_by(cnv_melt, chrom, arm, start.pos, end.pos, n.probes, GENE, BATCH)
+  
+  CNV_DISTRIBUTIONS_summarised = summarise(
+    CNV_DISTRIBUTIONS_grouped, 
+    'ZERO' = length(CNV_COPIES[CNV_COPIES == 0]), 
+    'ONE' = length(CNV_COPIES[CNV_COPIES == 1]), 
+    'TWO' = length(CNV_COPIES[CNV_COPIES == 2]), 
+    'THREE' = length(CNV_COPIES[CNV_COPIES == 3]), 
+    'FOUR' = length(CNV_COPIES[CNV_COPIES == 4]), 
+    'FIVE' = length(CNV_COPIES[CNV_COPIES == 5]))
+  
+  CNV_DISTRIBUTIONS_final_output = data.frame(CNV_DISTRIBUTIONS_summarised)
+  
+  return( CNV_DISTRIBUTIONS_final_output)
+}
+```
+
+```{r }
+all_batch_data = convert_CNV_distributions( batch1_data , 'BATCH_1')
+
+all_batch_data = rbind(all_batch_data , convert_CNV_distributions(CORRECTED_batch1_data , 'BATCH_1_corrected'))
+
+all_batch_data = rbind(all_batch_data , convert_CNV_distributions(batch2_data , 'BATCH_2'))
+
+all_batch_data = rbind(all_batch_data , convert_CNV_distributions(batch3_data , 'BATCH_3'))
+all_batch_data = rbind(all_batch_data , convert_CNV_distributions(CORRECTED_batch3_data , 'BATCH_3_corrected'))
+
+pstpip1_out_frame = filter(all_batch_data , GENE == 'PSTPIP1')
+
+comparison_DISTRIBUTIONS_filename = 'CNV_population_distributions__batch_correction_comparison_.txt'
+
+write.table( pstpip1_out_frame, 
+             file=here::here('results','mDiGS_CNV', comparison_DISTRIBUTIONS_filename ), 
+             quote=FALSE, 
+             sep='\t', 
+             row.names=FALSE)
+```

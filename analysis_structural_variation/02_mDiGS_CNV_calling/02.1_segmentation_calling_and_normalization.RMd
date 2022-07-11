@@ -1,0 +1,359 @@
+---
+title: "HS_capture_CNV_analysis_copynumber_SEGMENTATION"
+author: "David Morales-Heil"
+output:
+  html_document: default
+  pdf_document: default
+  word_document: default
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 5.5,
+	fig.height = 4.25
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'grid' )
+library( 'gridExtra' )
+library( 'patchwork' )
+library( 'tidyverse' )
+library( 'copynumber' )
+```
+
+```{r }
+
+##
+## Read in files for capture batch information and targeted capture bed file information.
+##
+
+
+capture_batch_file = here::here('info', 'targeted_capture_samples_batch_info.txt')
+batch_info = read.table(file = capture_batch_file , header=TRUE)
+
+capture_bed_file = here::here('info' , 'HS_capture_fosmid_regions_no_overlaps_WITH_GENE.bed')
+bed_info = read.table( file = capture_bed_file, header = FALSE)
+
+colnames(bed_info) = c('CHROM','START','END','GENE')
+```
+
+
+##
+The mDiGS normalized coverages are normalized in 3 different groups based on capture batches. This just generates a function to use for calling segmentations in the capture regions for all 3 batch cohorts. This function uses the R 'copynumber' package to call coverage/copy-number segmentations. Additionally, several manipulations are made to evaluate the segmentation data.
+
+Two normalization steps are performed, intra-sample normalization and inter-sample normalization.
+
+Intra-sample:
+
+In order to call a segmentation as a CNV, I had to create copy-number thresholds. For example, if the average copy-number over a SEGMENTATION_B was <1.5 for SAMPLE_A, I would say that the copy number for that segmentation was 1, and therefore that SAMPLE_A had a CNV at SEGMENTATION_B.  I found that certain CNV were being called because SAMPLE_A had a segmentation copy-number coverage of ~1.25 which seemed closer to 1 copy than 2 copies. However if you looked at the coverages for the other SAMPLE_A segmentations over the capture region, the average segmentation copy number was ~1.5.  The difference between 1.5 and 1.25 made SEGMENTATION_B no longer look like a high quality/confidence CNV call.
+
+In order to fix this, for each sample the copy number for every segmentation is normalized to the average normalized copy number for that individual within the capture region being analyzed.
+
+
+Inter-sample normalization:
+
+Within our targeted capture regions there were a few polymorphic CNV sites.  This leads to strange effects as a result of normalizing sequencing coverage to the mean coverage of the entire cohort, as was performed in the mDiGS coverage normalization.  At sites where CNV are high prevalence the mean coverage for the cohort actually falls between the coverage for the neutral-copy population and the CNV population.  This leads to both populations being normalized to a value in between, making both populations appear to be CNV populations. For example, if the samples are an even split between 100X coverage and 50X coverage, the mean is 75X.  The 100X population will look to be a >2 copy number population and the 50X population will look like a <2 copy number population.  In order to correct for this normalization to a non-existent 'average' coverage population, I median-normalize copy-number between all individuals within each segmentation.  The effect of this is to normalize the data to a sample that is likely in the most populous copy-number population.  If two copy-number populations have an equal number of members, then a median value would be calculated as the average of the two middle values and would once again result in normalizing to a value floating between the populations. In order to prevent this, I perform an altered median normalization.  In sample batches with an odd number of samples, I perform a true median normalization.  In sample batches with an even number of samples, I sort-order all of the segmentation coverages in ascending order, and then I normalize all segmenation coverages to the [(n/2) + 1]th value in the series.
+
+```{r }
+
+
+##
+## The mDiGS normalized coverages are normalized in 3 different groups based on capture batches.  
+## This just generates a function to use for calling segmentations in the capture regions for 
+## all 3 batch cohorts. This function uses the R 'copynumber' package to call coverage/copy-number segmentations
+##
+
+
+call_CNV_by_batch = function( bed_info, batch, in_file_base ) {
+  
+  gene_count = 1
+ 
+  for (i in bed_info$GENE) {
+    
+    temp_file = paste( batch, i, in_file_base, sep='_' )
+
+    covg_data = read.table(file = here::here('output','mDiGS_normalized_coverages', temp_file ), header = TRUE)
+    
+    mean_covgs = summarise_all( covg_data, mean )
+    
+    mean_melt = melt( mean_covgs, id.vars = c( 'CHROM' , 'POSITION' ), variable.name = 'SAMPLE', value.name = 'AVERAGE_COVERAGE')
+    
+    SAMPLE_LIST = unique(mean_melt$SAMPLE)
+    
+    ####
+    #### use 'copynumber' package to call segmentations
+    ####
+    all_seg = multipcf(data = covg_data)
+    
+    
+    ####
+    #### filter out all segmentations < 500bp in length 
+    ####
+    all_seg = filter(all_seg, (end.pos - start.pos) >= 500)
+    
+    
+    ####
+    #### generate random identifiers for segmentations to use as factors for easily keeping
+    #### track of which row belongs to which segmentation after the data is melted
+    ####
+    
+    CNV_LIST = c(rep(-9,length(all_seg$chrom)))
+    for (j in 1:length(CNV_LIST)) {
+    
+      temp_id = paste('CNV',j,sep='_')
+   
+      CNV_LIST[j] = temp_id
+    
+    }
+    
+    all_seg$CNV_ID = CNV_LIST    
+    
+    
+    ###
+    ###  Mmmmmmmmmmmmmm..... melted data.
+    ###
+    
+    all_melt = melt( all_seg, id.vars = c('chrom','arm','start.pos','end.pos','n.probes','CNV_ID'), variable.name = 'SAMPLE',value.name = 'CNV')
+    
+    
+    ###
+    ### Normalize segmentation coverages. Each sample has a value for each segmentation which is the
+    ### mean normalized copy-number for that sample over the segmentation region.  Some samples have lower than expected
+    ### coverage across the entire region. i.e., some samples might hover around 1.5X coverage for a capture region. In
+    ### that case, a segmentation for that individual with 1.25X coverage might not be a real CNV even thought it is 
+    ### getting pretty close to 1X coverage.  We need to normalize segmentation coverage to mean coverage across the
+    ### region in order to determine how close to 1X a segmentation really is.
+    ###
+    
+    
+    
+    all_melt$MEAN_COVG = c(rep(-9,length(all_melt$chrom)))
+
+    for (j in 1:length(all_melt$MEAN_COVG)) {
+      
+      temp_sample = all_melt$SAMPLE[j]
+      
+      all_melt$MEAN_COVG[j] = mean_melt$AVERAGE_COVERAGE[mean_melt$SAMPLE == temp_sample]
+      
+    }
+    
+    #all_melt$CNV_FOLD_DIFF = all_melt$CNV / all_melt$MEAN_COVG
+    
+    all_melt$CNV_SAMPLE_NORMALIZED = all_melt$CNV / all_melt$MEAN_COVG
+    
+    ###
+    ### This section is "median normalizing" the CNV covgs.  For polymorphic CNV where close to 50% of the population
+    ### has a 1-copy CNV, the coverage normalization will skew the relative coverage so that the 2-copy population appear
+    ### to have >2 copies and the 1-copy populatino has between 1 and 2 copies.  The mean will hover in an empty space
+    ### between the two.  In order to try to fix this skewing, I am "median normalizing" the data.  The idea here is that
+    ### more samples are likely to be in the 2-copy population, so the median is likely going to be ~2-copies.  So by 
+    ### normalizing to the "median" then we will re-center the skewed data around 2-copies.  
+    ###
+    ### The reason I have "median" air-quoted here is that the code is not exactly median coverage, for the following reason.
+    ### If the samples broke down into two ***evenly*** split populations, one with 2-copies and one with 1-copy, there is no
+    ### "true median".  Calculating the median will simply give you the average of the two middle values.  In this case, the
+    ### median value will once again float between 2-copies and 1-copy, and normalizing to this value will have a similar skewing
+    ### effect as normalizing to the mean.  
+    ###
+    ### So what I decided to do was a slight variation on calculating the median:
+    ###
+    ### If sample_cohort has an odd number of samples:
+    ###       Normalize segmentation coverage data to the actual median
+    ###
+    ### Else-if sample_cohort has an even number of samples:
+    ###       Sort coverage values for the segmentation in ascending order
+    ###       Define median value as the value in the ((sample_number/2) + 1) place within the set
+    ###
+    ### In the case of the samples splitting into CNV populations with equal number of samples in each, taking the (N/2)+1
+    ### value as the median should ensure that you take a value from the higher copy number population instead of taking the
+    ### "true median" which would be an average value between the populations.
+    ###
+    ### This method does bias toward calling deletions instead of insertions. i.e, if the two CNV populations are split evenly
+    ### between 2-copy and 3-copy populations, this method will define the 3-copy population as 2X and the 2-copy population as 1X.
+    ###
+    ###
+
+
+    all_melt$CNV_MEDIAN_COVG = c(rep(-9,length(all_melt$chrom)))
+    
+    for (j in 1:length(all_melt$CNV_MEDIAN_COVG)) {
+      
+      temp_cnv = all_melt$CNV_ID[j]
+      
+      TEMP_NORM_COVGS = all_melt$CNV_SAMPLE_NORMALIZED[all_melt$CNV_ID == temp_cnv]
+
+      temp_sample_length = length( TEMP_NORM_COVGS )
+
+      #print(TEMP_NORM_COVGS)
+      #print(sort(TEMP_NORM_COVGS))
+      #print(temp_sample_length)
+      #print(median(sort(TEMP_NORM_COVGS)))
+      
+      if (temp_sample_length %% 2 == 0) {
+        temp_median_covg = sort(TEMP_NORM_COVGS)[((temp_sample_length/2) + 1)]
+      } else {
+        temp_median_covg = median(TEMP_NORM_COVGS)
+      }
+      all_melt$CNV_MEDIAN_COVG[j] = temp_median_covg
+    }
+     
+        
+    all_melt$CNV_FOLD_DIFF = all_melt$CNV_SAMPLE_NORMALIZED / all_melt$CNV_MEDIAN_COVG
+    
+    
+    ###
+    ###  ***NOTE***  CNV_FOLD_DIFF is the ultimate value we were looking for.  I have left
+    ###  it called 'fold_diff' to remind myself that this is no longer a copy-number value,
+    ###  but rather a relative coverage value.
+    ###
+    
+    
+    
+    ###
+    ###  Smooth out data.  Round everything to nearest copy number.  i.e., if a sample has > 1.25 fold relative copies, that 
+    ###  translates to > 2.5 relative copy number, and that would round up to 3.  So any fold coverage difference of 
+    ###  > 1.25 and <=1.75 fold coverage ( which again, is equivalent to >2.5 copies and <=3.5 copies, becomes 3 copies).  Those
+    ###  same guidelines then define how we round samples to 1 copy, 2 copies, 3 copies, 4 copies, etc. 
+    ###
+    
+    all_melt$CNV_SMOOTH = all_melt$CNV_FOLD_DIFF
+    
+    all_melt = mutate(all_melt, CNV_SMOOTH = case_when(
+      (CNV_FOLD_DIFF >= 0) & (CNV_FOLD_DIFF <= ((0/2) + 0.25)) ~ 0,
+      (CNV_FOLD_DIFF > ((1/2) - 0.25)) & (CNV_FOLD_DIFF <= ((1/2) + 0.25)) ~ 1,
+      (CNV_FOLD_DIFF > ((2/2) - 0.25)) & (CNV_FOLD_DIFF <= ((2/2) + 0.25)) ~ 2,
+      (CNV_FOLD_DIFF > ((3/2) - 0.25)) & (CNV_FOLD_DIFF <= ((3/2) + 0.25)) ~ 3,
+      (CNV_FOLD_DIFF > ((4/2) - 0.25)) & (CNV_FOLD_DIFF <= ((4/2) + 0.25)) ~ 4,
+      (CNV_FOLD_DIFF > ((5/2) - 0.25)) & (CNV_FOLD_DIFF <= ((5/2) + 0.25)) ~ 5,
+      (CNV_FOLD_DIFF > ((6/2) - 0.25)) & (CNV_FOLD_DIFF <= ((6/2) + 0.25)) ~ 6,
+      (CNV_FOLD_DIFF > ((7/2) - 0.25)) & (CNV_FOLD_DIFF <= ((7/2) + 0.25)) ~ 7,
+      (CNV_FOLD_DIFF > ((8/2) - 0.25)) & (CNV_FOLD_DIFF <= ((8/2) + 0.25)) ~ 8,
+      (CNV_FOLD_DIFF > ((9/2) - 0.25)) & (CNV_FOLD_DIFF <= ((9/2) + 0.25)) ~ 9,
+      (CNV_FOLD_DIFF > ((10/2) - 0.25)) & (CNV_FOLD_DIFF <= ((10/2) + 0.25)) ~ 10 ))  
+
+    
+
+    ###
+    ### Un-melt the data; put it back in short form.
+    ###
+    
+    all_smoothed_back = dcast( all_melt , chrom + arm + start.pos + end.pos + n.probes ~ SAMPLE , value.var = 'CNV_SMOOTH')
+    all_raw_back = dcast( all_melt , chrom + arm + start.pos + end.pos + n.probes ~ SAMPLE , value.var = 'CNV')
+    all_fold_diff_back = dcast( all_melt , chrom + arm + start.pos + end.pos + n.probes ~ SAMPLE , value.var = 'CNV_FOLD_DIFF')
+    
+    all_smoothed_back$GENE = c(rep( i , length(all_smoothed_back$chrom) ) )
+    all_raw_back$GENE = c(rep( i , length(all_raw_back$chrom) ) )
+    all_fold_diff_back$GENE = c(rep( i , length(all_fold_diff_back$chrom) ) )
+
+    out_smooth_file_name = here::here('output', 'mDiGS_CNV', paste( batch, i, 'CNV_smoothed_segmentation_calls.txt', sep='_') )
+    out_raw_file_name = here::here('output', 'mDiGS_CNV', paste( batch, i, 'CNV_raw_segmentation_calls.txt' , sep='_') )
+    out_fold_diff_file_name = here::here('output', 'mDiGS_CNV', paste( batch, i, 'CNV_fold_diff_segmentation_calls.txt', sep='_') )
+
+    write.table(all_raw_back, file = out_raw_file_name, quote=FALSE, sep='\t', row.names=FALSE)  
+    write.table(all_smoothed_back, file = out_smooth_file_name, quote=FALSE, sep='\t', row.names=FALSE)  
+    write.table(all_fold_diff_back, file = out_fold_diff_file_name, quote=FALSE, sep='\t', row.names=FALSE)  
+    
+  }
+  
+  gene_count = gene_count + 1
+  
+}  
+```
+
+```{r }
+call_CNV_by_batch( bed_info, 'BATCH_1', 'batch_normalized_coverages.txt' )
+call_CNV_by_batch( bed_info, 'BATCH_2', 'batch_normalized_coverages.txt' )
+call_CNV_by_batch( bed_info, 'BATCH_3', 'batch_normalized_coverages.txt' )
+```
+
+```{r COMPILE_CNV_GENE_FILES}
+
+# Take the CNV data generated by the median-normalization function above, and combine the data for
+# all genes for each batch (still keeping the batches separate).
+
+
+compile_gene_cnvs_by_batch = function( bed_info, batch ) {
+  
+  gene_count = 1
+
+
+  for (i in bed_info$GENE) {
+    
+    #print(gene_count)
+    #print(i)
+    
+    tmp_RAW_file = here::here('output', 'mDiGS_CNV', paste( batch, i, 'CNV_raw_segmentation_calls.txt', sep='_') )
+    tmp_SMOOTH_file = here::here('output', 'mDiGS_CNV', paste( batch, i, 'CNV_smoothed_segmentation_calls.txt', sep='_') )
+    tmp_FOLD_DIFF_file = here::here('output', 'mDiGS_CNV', paste( batch, i, 'CNV_fold_diff_segmentation_calls.txt', sep='_') )
+    
+    raw_data = read.table( file = tmp_RAW_file, header = TRUE)
+    smooth_data = read.table( file = tmp_SMOOTH_file, header = TRUE)
+    fold_diff_data = read.table( file = tmp_FOLD_DIFF_file, header = TRUE) 
+      
+    if (gene_count == 1) {
+      compiled_gene_raw        = raw_data
+      compiled_gene_smooth     = smooth_data
+      compiled_gene_fold_diff  = fold_diff_data
+      
+    } else {
+  
+      if (length(raw_data$chrom) == 0){
+        
+      }
+      else {
+        compiled_gene_raw    = full_join( compiled_gene_raw, raw_data, by = c(colnames(compiled_gene_raw)) )
+        compiled_gene_smooth = full_join( compiled_gene_smooth, smooth_data, by = c(colnames(compiled_gene_smooth)) )
+        compiled_gene_fold_diff = full_join( compiled_gene_fold_diff, fold_diff_data, by = c(colnames(compiled_gene_fold_diff)) )
+      }
+    }
+  
+    
+    gene_count = gene_count + 1
+  
+  }
+
+  RAW_out_file       = here::here('output', 'mDiGS_CNV', paste(batch, 'ALL_GENES_COMPILED_CNV_raw_segmentation_calls.txt', sep='_'))
+  SMOOTH_out_file    = here::here('output', 'mDiGS_CNV', paste(batch, 'ALL_GENES_COMPILED_CNV_smooth_segmentation_calls.txt', sep='_'))
+  FOLD_DIFF_out_file = here::here('output', 'mDiGS_CNV', paste(batch, 'ALL_GENES_COMPILED_CNV_fold_diff_segmentation_calls.txt', sep='_'))
+  
+  write.table( compiled_gene_raw, file = RAW_out_file, quote=FALSE, sep='\t', row.names=FALSE)
+  write.table( compiled_gene_smooth, file = SMOOTH_out_file, quote=FALSE, sep='\t', row.names=FALSE)
+  write.table( compiled_gene_fold_diff, file = FOLD_DIFF_out_file, quote=FALSE, sep='\t', row.names=FALSE)  
+  
+}  
+```
+
+```{r }
+compile_gene_cnvs_by_batch( bed_info, 'BATCH_1')
+compile_gene_cnvs_by_batch( bed_info, 'BATCH_2')
+compile_gene_cnvs_by_batch( bed_info, 'BATCH_3')
+```
