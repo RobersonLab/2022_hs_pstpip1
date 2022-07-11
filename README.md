@@ -54,3 +54,14 @@ The annotations are based on the GRCh37 human genome build.
 * tidyverse
 * umap
 * UpSetR
+
+### Setting up custom python classes
+Lots of the Python work requires custom classes and functions. They are included in the 'custom_functions_y_classes' directory. To prepare these for use, do the following.
+
+```bash
+cd custom_functions_y_classes
+conda create -n psptip1 python=2.7.18
+conda activate pstpip1
+pip install .
+```
+
