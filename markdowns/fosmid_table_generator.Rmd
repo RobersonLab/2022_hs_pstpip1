@@ -1,0 +1,96 @@
+---
+title: "Fosmid Table"
+author: "David Morales-Heil"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'grid' )
+library( 'gridExtra' )
+```
+
+###################################################
+###################################################
+
+Fosmid info/coverage table.
+
+
+```{r fos_files}
+
+fosmid_bed_file = here::here('info', 'HS_fosmid_set.bed')
+
+fos_bed = read.table( 
+  file = fosmid_bed_file, 
+  header = FALSE )
+
+fosmid_coverages_file = here::here('output', 'capture_coverages', 'HS_capture_mean_fosmid_coverages.txt')
+
+fos_covg = read.table( 
+  file = fosmid_coverages_file, 
+  header = TRUE )
+```
+
+```{r merge_data}
+fos_covg = select( fos_covg , -c(capture_batch,sequencing_batch)) %>%
+  melt( id.vars = 'INDIVIDUAL' , value.name = 'coverage' ) %>%
+  dplyr::rename('FOSMID' = variable)%>%
+  mutate(FOSMID = as.character(FOSMID)) %>%
+  mutate(FOSMID = str_replace(FOSMID, '[.]','-'))
+
+mean_covg = group_by( fos_covg, FOSMID) %>%
+  summarise( MEAN_COVERAGE = mean(coverage))
+
+colnames( fos_bed) = c('CHROM' , 'START', 'END', 'GENE', 'FOSMID')
+fos_bed = mutate( fos_bed , FOSMID = as.character( FOSMID ))
+
+out_frame = full_join( fos_bed , mean_covg , by = 'FOSMID') %>%
+  separate( GENE, c('GENE','NUMBER') ,"_") %>%
+  select(-c(NUMBER)) %>%
+  #select( CHROM , START, END, FOSMID, GENE, MEAN_COVERAGE)
+  select( GENE, FOSMID, CHROM , START, END, MEAN_COVERAGE)
+```
+
+```{r output_table}
+out_file = here::here('results', 'fosmid_ID_and_coverage_table.txt')
+
+write.table( 
+  out_frame, 
+  file = out_file, 
+  row.names = FALSE, 
+  sep = "\t", 
+  quote = FALSE)
+```

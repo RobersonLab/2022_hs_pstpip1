@@ -1,0 +1,228 @@
+---
+title: "Singleton_analysis"
+author: "David Morales-Heil"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 5.5,
+	fig.height = 4.25
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'grid' )
+library( 'gridExtra' )
+library( 'patchwork' )
+library( 'tidyverse' )
+```
+
+```{r read_in_files}
+singleton_summary_file = here::here('output' , 'VEP_variant_files' , 'singleton_variant_summary.txt' )
+
+singleton_histogram_file = here::here('output' , 'VEP_variant_files' ,  'gnomad_singletons_histogram.txt' )
+
+sing_info = read.table( file = singleton_summary_file, header=TRUE )
+
+sing_histo = read.table( file = singleton_histogram_file, header=TRUE )
+```
+
+```{r plot_data, fig.width=6, fig.height=4}
+sing_info = mutate( sing_info , POPULATION = factor( POPULATION , levels = c( 'nfe' , 'afr' , 'amr', 'sas', 'eas' , 'all_subsets' )))
+
+average_singletons_only = filter( sing_info , grepl( 'all_subsets' , POPULATION ) )
+no_average_population = filter( sing_info , !grepl( 'all_subsets' , POPULATION ))
+
+average_singleton_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = average_singletons_only, 
+    aes(x=GENE , y=SINGLETON_PER_ALLELE), 
+    color = 'black', 
+    size=2.5, 
+    shape=16) +  
+  #theme(legend.position= 'none') +
+  ylab('Singletons Per Allele\n') +
+  xlab('') +
+  ggtitle('')+
+  theme(axis.text.y=element_text(size=14), axis.title=element_text(size=16))+
+  theme(axis.text.x = element_text(angle = 90, size=12, hjust=1,vjust=0.5) )
+
+
+populations_singleton_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = no_average_population, 
+    aes(x=GENE , y=SINGLETON_PER_ALLELE , color=POPULATION), size=2.5 , shape=16) + 
+  scale_color_manual(values = c('red' , 'purple', 'orange', 'green', 'blue'))+
+  #theme(legend.position = 'none') +
+  ylab('Singletons Per Allele\n') +
+  xlab('') +  
+  ggtitle('')+
+  theme(axis.text.y=element_text(size=14), axis.title=element_text(size=16))+
+  theme(axis.text.x = element_text(angle = 90, size=12, hjust=1,vjust=0.5) )
+
+
+average_gene_length_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = average_singletons_only, 
+    aes(x=GENE_LENGTH , y=SINGLETON_PER_ALLELE ), 
+    color = 'black', 
+    size=2.5, 
+    shape=16) +  
+  scale_shape_manual(values=16) +
+  #theme(legend.position= 'none') +
+  ylab('Singletons Per Allele\n') +
+  xlab('\nCDS Length') +
+  ggtitle('')+
+  theme(axis.text.y=element_text(size=14), axis.title=element_text(size=16))+
+  theme(axis.text.x = element_text(angle = 90, size=14, hjust=1,vjust=0.5) )
+
+
+popultions_gene_length_plot = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = no_average_population, 
+    aes(x=GENE_LENGTH , y=SINGLETON_PER_ALLELE , color=POPULATION ), 
+    size=2.5, 
+    shape=16 ) +  
+  scale_color_manual(values = c('red' , 'purple', 'orange', 'green', 'blue'))+
+  ggtitle('')+
+  #theme(legend.position = 'none') +
+  theme(axis.text.y=element_text(size=14), axis.title=element_text(size=16))+
+  theme(axis.text.x = element_text(angle = 90, size=14, hjust=1,vjust=0.5) )+
+  ylab('Singletons Per Allele\n') +
+  xlab('\nCDS Length') 
+```
+
+```{r fig.width=6, fig.height=4}
+TOTAL_SINGLETONS = sing_histo$COUNTS[sing_histo$AC_RANGE == 'total']
+
+sing_histo_NO_TOTAL = mutate(sing_histo, AC_RANGE = factor( AC_RANGE , levels=c( "1" , "2-10" , ">10" , "total" ))) %>%
+  mutate( pct_singletons = COUNTS/TOTAL_SINGLETONS)%>%
+  filter( !grepl('total', AC_RANGE))
+    
+sing_raw_plot  = ggplot() +
+  theme_bw() +
+  geom_col( data = sing_histo_NO_TOTAL , aes( x = AC_RANGE , y = COUNTS )) +
+  ylab('Number Of Protein Affecting Variants\n') +
+  xlab('\nNumber Of Observations')+
+  theme(axis.text = element_text(size=14), axis.title=element_text(size=16))
+
+sing_pct_plot  = ggplot() +
+  theme_bw() +
+  geom_col( data = sing_histo_NO_TOTAL , aes( x = AC_RANGE , y = pct_singletons )) +
+  scale_y_continuous( breaks = c(0,0.1,0.2,0.3,0.4,0.5) , labels = c('0','0.1','0.2','0.3','0.4','0.5')) +
+  ylab('Percent Of All Protein Affecting Variants\n') +
+  xlab('\nNumber Of Observations')+
+  theme(axis.text = element_text(size=14), axis.title=element_text(size=16))
+```
+
+```{r fig.width = 8 , fig.height = 4}
+histo_combined = ggarrange( sing_raw_plot , sing_pct_plot , labels = c('a','b'))
+averages_grouped = ggarrange( average_singleton_plot , average_gene_length_plot , labels = c('c','d'))
+populations_grouped = ggarrange( populations_singleton_plot , popultions_gene_length_plot , labels = c('e','f') )
+
+#plot( averages_grouped )
+```
+
+```{r fig.width = 12, fig.height = 18}
+final_singletons_plot = histo_combined + averages_grouped + populations_grouped + plot_layout( nrow = 3 , ncol = 1 )
+plot( final_singletons_plot )
+
+gnomad_singletons_out_file = here::here( 'results' , 'gnomad_gene_specific_singletons.pdf')
+
+pdf( file = gnomad_singletons_out_file , width = 12 , height = 18)
+plot( final_singletons_plot )
+dev.off()
+```
+
+```{r }
+ggplot() +
+  theme_bw() +
+  geom_point(
+    data = sing_info, 
+    aes(x=GENE,y=SINGLETON_PER_ALLELE,color=POPULATION),
+    size=3.5,
+    shape=16) +  
+  scale_shape_manual(values=16) +
+  scale_color_manual(values=c('purple','black','orange','yellow','red','green'))+
+  ylab('Singletons Per Allele\n') +
+  xlab('') +  
+  ggtitle('')+
+  theme(axis.text.x = element_text(angle = 90)) 
+
+
+ggplot() +
+  geom_point(
+    data = sing_info, 
+    aes(x=GENE,y=DEPTH_MEAN,color=POPULATION),
+    size=3.5,
+    shape=16) +  
+  scale_shape_manual(values=16) +
+  scale_color_manual(values=c('purple','black','orange','yellow','red','green'))+
+  #scale_color_manual(values=c('purple','blue','black','orange','black','red','black','green'))+
+  ggtitle('')+
+  ylab('Average Alleles Surveyed\n') +
+  xlab('') +   
+  theme(axis.text.x = element_text(angle = 90)) 
+
+ggplot() +
+  geom_point(
+    data = sing_info, 
+    aes(x=GENE,y=DEPTH_STD,color=POPULATION),
+    size=3.5,
+    shape=16) +  
+  scale_shape_manual(values=16) +
+  scale_color_manual(values=c('purple','black','orange','yellow','red','green'))+
+  #scale_color_manual(values=c('purple','blue','black','orange','black','red','black','green'))+
+  ggtitle('')+
+  ylab('Standard Deviation Alleles Surveyed\n') +
+  xlab('') +     
+  theme(axis.text.x = element_text(angle = 90)) 
+
+ggplot() +
+  geom_point(
+    data = sing_info, 
+    aes(x=GENE,y=DEPTH_STD/DEPTH_MEAN,color=POPULATION),
+    size=3.5,
+    shape=16) +  
+  scale_shape_manual(values=16) +
+  scale_color_manual(values=c('purple','black','orange','yellow','red','green'))+
+  #scale_color_manual(values=c('purple','blue','black','orange','black','red','black','green'))+
+  scale_y_continuous(limits=c(0,1),breaks=c(seq(0,1,0.1)))+
+  ggtitle('')+
+  theme(axis.text.x = element_text(angle = 90)) 
+```

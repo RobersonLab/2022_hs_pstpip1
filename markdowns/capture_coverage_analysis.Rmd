@@ -1,0 +1,356 @@
+---
+title: "targeted capture coverage performance"
+author: "David Morales-Heil"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r here}
+library( 'here' )
+```
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  error = FALSE,
+	echo = FALSE,
+	message = TRUE,
+	fig.path = paste0( here::here( 'results', 'figures' ), "/" ),
+	fig.keep = 'all',
+	dpi = 300,
+	fig.width = 12,
+	fig.height = 8
+)
+```
+
+```{r load packages, include=FALSE}
+library( "plyr")
+library( "dplyr" )
+library( "magrittr" )
+library( "ggplot2" )
+library( "cowplot" )
+library( "reshape2" )
+library( "stringr" )
+library( "UpSetR" )
+library( "ggrepel" )
+library( "readr" )
+library( "pheatmap" )
+library( "RColorBrewer" )
+library( "tidyr" )
+library( "RColorBrewer" )
+library( "sjPlot" )
+library( 'class' )
+library( 'umap' )
+library( 'ggpubr' )
+library( 'grid' )
+library( 'gridExtra' )
+```
+
+```{r read_in_files}
+original_covg_info = read.table( 
+  file = here::here( 'output' , 'capture_coverages', 'HS_capture_mean_fosmid_coverages.txt'), 
+  header=TRUE ) 
+```
+
+```{r plot_data}
+##
+## Coverage analysis
+##
+## Plot out mean coverage over fosmid regions for all samples.  This makes two plots.  One plots out the
+## coverages for all samples over all fosmids.  The other plots out the reverse, i.e., coverages for all
+## fosmids for each individual.
+##
+## Samples are color coded for which targeted capture batch they were processed in and and they in one
+## plot they are shape coded for which collaborator samples were obtained from. 
+##
+##
+
+covg_info = mutate( original_covg_info, 
+                    capture_batch = factor(capture_batch)) %>%
+  mutate( sequencing_batch = factor(sequencing_batch) ) %>%
+  melt(
+    id.vars = c('INDIVIDUAL','capture_batch','sequencing_batch'),
+    variable.name = 'fosmid',
+    value.name='coverage') %>%
+  mutate( fosmid = as.character(fosmid)) 
+
+temp_frame = select(covg_info, INDIVIDUAL, capture_batch, fosmid)
+temp_frame = temp_frame[ order(temp_frame$capture_batch, decreasing = FALSE) , ]
+temp_frame = mutate( temp_frame , INDIVIDUAL = as.character( INDIVIDUAL ))
+indv_factor_order = unique(as.vector( temp_frame$INDIVIDUAL ))
+
+covg_info = mutate( covg_info, INDIVIDUAL = factor( INDIVIDUAL , levels = indv_factor_order)) %>%
+  mutate( COHORT = case_when(
+    grepl('nagele',INDIVIDUAL) ~ 'WU', 
+    grepl('OSU', INDIVIDUAL) ~ 'OSU', 
+    grepl('irish', INDIVIDUAL) ~ 'SVUH') ) %>%
+  mutate(COHORT = factor(COHORT, levels=c('SVUH', 'WU', 'OSU'))) %>%
+  mutate(EXPERIMENT = c(rep('HS_CAPTURE',length(INDIVIDUAL)))) %>%
+  mutate(EXPERIMENT = factor(EXPERIMENT))
+
+fosmid_grouped = group_by(covg_info,fosmid) 
+fosmid_summary = summarise(fosmid_grouped, mean_covg = mean(coverage))
+
+mean_fosmid_coverage = mean( fosmid_summary$mean_covg )
+stdev_fosmid_coverage = sd( fosmid_summary$mean_covg )
+median_fosmid_coverage = median( fosmid_summary$mean_covg )
+
+p1 = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = covg_info, 
+    aes(x=fosmid,y=coverage,color=capture_batch), 
+    shape=16,
+    size=2) +
+  scale_colour_manual(values=c('red','blue','green')) +
+  #theme(legend.position= 'none') +
+  ggtitle('') +
+  scale_y_continuous(limits=c(0,500),breaks=c(seq(0,500,50))) +
+  theme(axis.text.x = element_text(angle = 90))  +
+  ylab('Mean Sample Coverage\n') +
+  xlab('\nFosmid') +
+  geom_point(
+    data = fosmid_summary, 
+    aes(x=fosmid, y=mean_covg),
+    color = 'black',
+    shape=16,
+    size=3) +
+  geom_hline(yintercept = mean(fosmid_summary$mean_covg), linetype = 'dashed',color = 'black') +
+  theme(axis.title= element_text(size=16), axis.text.y = element_text(size=14), axis.text.x = element_blank(), axis.ticks.x = element_blank())
+  
+
+indv_grouped = group_by(covg_info,INDIVIDUAL) 
+indv_summary = summarise(indv_grouped, mean_covg = mean(coverage))
+
+mean_individual_coverage = mean(indv_summary$mean_covg)
+median_individual_coverage = median(indv_summary$mean_covg)
+std_dev_individual_coverage = sd(indv_summary$mean_covg)
+
+p2 = ggplot() +
+  theme_bw() +
+  geom_point(
+    data = covg_info, 
+    aes(
+      x=INDIVIDUAL,
+      y=coverage,
+      color=capture_batch,
+      shape=COHORT),
+    size=2) +
+  scale_colour_manual(values=c('red','blue','green')) +
+  scale_shape_manual(values=c(16,1,2)) +
+  #theme(legend.position= 'none') +
+  ggtitle('') +
+  scale_y_continuous(limits=c(0,500),breaks=c(seq(0,500,50))) +
+  ylab('Fosmid Mean Coverage\n') +
+  xlab('\n Individual') +
+  geom_point(
+    data = indv_summary, 
+    aes(x=INDIVIDUAL, y=mean_covg),
+    color = 'black',
+    shape=16,
+    size=3) +
+  geom_hline(yintercept = mean(indv_summary$mean_covg), linetype = 'dashed',color = 'black') +
+  theme(axis.title= element_text(size=16), axis.text.y = element_text(size=14), axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+plot( p1 )
+plot( p2 )
+
+
+pdf(here::here('results' , 'targeted_capture_coverage.pdf'), height =12, width=17.5)
+grid.arrange( p1 , p2 )
+dev.off()
+```
+
+```{r fig.height=4, fig.width=6}
+##
+## This section is looking at capture efficiency (percent of reads on target).
+##
+## This analysis is not a straight forward as I had thought it would be initially. There are
+## two PCR steps that can introduce PCR duplicates into the analysis. Pre-capture amplification, and
+## post-capture amplification.
+##
+## In terms of analyzing capture efficiency, we are interested in counting PCR duplicates that were 
+## generated pre-capture.  Regardless of the fact that these pre-capture duplicates don't add additional
+## sequencing data, they do "count" when it comes to evaluating whether or not the capture is pulling
+## down on target reads.  
+##
+## However, post-capture PCR duplicates inflate the number of apparent reads that were pulled down
+## during the capture.  They really ought not to be counted.  But there is no way to identify if a PCR
+## duplicate is a pre-capture or a post-capture duplicate.
+##
+## The effects of this can be seen in these plots. BATCH1 capture samples have the highest PCT_ON_TARGET
+## when you evaluate (on-target-reads including PCR duplicates)/(all-reads including PCR duplicates),
+## but they also have the highest overall percentage of PCR duplicate reads.  When you evalute PCT_ON_TARGET
+## by calculating: (on-target-reads WITHOUT PCR duplicates)/(all-reads including PCR duplicates) you see
+## a similar on-target rate for all batches.  To me this seems to indicate that the elevated apparent PCT_ON_TARGET
+## for BATCH1 calculated the first way (including PCR duplicates) gives the appearance of better efficiency, but it 
+## may just be a result of inflated on-target reads from post-capture PCR duplicates.
+##
+##
+##
+##
+
+ontarget_info = read.table( 
+  file = here::here('output', 'capture_coverages' , 'HS_capture_on_target_and_pcr_duplicates_HS_CAPTURED_ONLY.txt' ), 
+  header=TRUE,
+  stringsAsFactors = FALSE)
+
+ontarget_info = mutate( ontarget_info, TOTAL_READS = as.numeric(TOTAL_READS)) %>%
+  mutate( CAPTURE_BATCH = as.factor(CAPTURE_BATCH)) %>%
+  mutate( SEQUENCE_BATCH = as.factor(SEQUENCE_BATCH)) %>%
+  mutate( READS_ON_TARGET = as.numeric(READS_ON_TARGET)) %>%
+  mutate( DUPLICATE_READS = as.numeric(DUPLICATE_READS)) %>%
+  mutate( TOTAL_READS_NO_DUPLICATES = as.numeric(TOTAL_READS_NO_DUPLICATES)) %>%
+  mutate( READS_ON_TARGET_NO_DUPLICATES = as.numeric(READS_ON_TARGET_NO_DUPLICATES)) %>%
+  mutate( PCT_ON_TARGET = READS_ON_TARGET/TOTAL_READS) %>%
+  mutate( PCT_DUPLICATES = DUPLICATE_READS/TOTAL_READS) %>%
+  mutate( PCT_no_dup_ON_TARGET = READS_ON_TARGET_NO_DUPLICATES/TOTAL_READS) %>%
+  mutate( PCT_no_dup_ON_TARGET_no_dup_total = READS_ON_TARGET_NO_DUPLICATES/TOTAL_READS_NO_DUPLICATES) %>%
+  mutate( SAMPLE = factor( SAMPLE , levels = indv_factor_order)) %>%
+  mutate( CAPTURE_BATCH = factor( CAPTURE_BATCH , levels = c( 1 , 2 , 3))) %>%
+  mutate( INDIVIDUAL = as.character( SAMPLE )) %>%
+  mutate( COHORT = case_when(
+    grepl('nagele',INDIVIDUAL) ~ 'WU', 
+    grepl('OSU',INDIVIDUAL) ~ 'OSU', 
+    grepl('irish',INDIVIDUAL) ~ 'SVUH') ) %>%
+  mutate(COHORT = factor(COHORT, levels=c('SVUH', 'WU', 'OSU'))) %>%
+  mutate(EXPERIMENT = c(rep('HS_CAPTURE',length(SAMPLE)))) %>%
+  mutate(EXPERIMENT = factor(EXPERIMENT))
+
+p3 = ggplot()+
+  theme_bw() +
+  geom_point( 
+    data = ontarget_info, 
+    aes( x = SAMPLE, y = PCT_ON_TARGET, color = CAPTURE_BATCH, shape=COHORT ),
+    size=3) +
+  scale_color_manual( values=c('red','blue','green')) +
+  scale_shape_manual( values=c(16, 1, 2 )) +
+  theme(axis.text.x = element_blank() , axis.ticks.x = element_blank()) +
+  ylab('ALL ON TARGET READS (WITH DUPLICATES) /\n ALL READS (WITH DUPLICATES)\n') +
+  xlab('\nIndividual')+
+  theme(axis.text = element_text(size=14) , axis.title = element_text(size=16))
+
+p4 = ggplot()+
+  theme_bw() +
+  geom_point( 
+    data = ontarget_info, 
+    aes( x = PCT_DUPLICATES, y = PCT_ON_TARGET, color = CAPTURE_BATCH, shape=COHORT ), 
+    size=3) +
+  scale_color_manual( values=c('red','blue','green')) +
+  scale_shape_manual( values=c(16, 1, 2 )) +
+  ylab('ALL ON TARGET READS (WITH DUPLICATES) /\n ALL READS (WITH DUPLICATES)\n') +
+  xlab('\nPercent Duplicate Reads')+
+  theme(axis.text = element_text(size=14) , axis.title = element_text(size=16))
+
+
+p5 = ggplot()+
+  theme_bw() +
+  geom_point( 
+    data = ontarget_info, 
+    aes( x = SAMPLE, y = PCT_no_dup_ON_TARGET, color = CAPTURE_BATCH, shape= COHORT), 
+    size =3) +
+  scale_color_manual( values=c('red','blue','green')) +
+  scale_shape_manual( values=c(16, 1, 2 )) +
+  theme(axis.text.x = element_blank() , axis.ticks.x = element_blank()) +
+  ylab('ON TARGET READS (NO DUPLICATES) /\n ALL READS (WITH DUPLICATES)\n') +
+  xlab('\nIndividual')+
+  theme(axis.text = element_text(size=14) , axis.title = element_text(size=16))
+
+p6 = ggplot()+
+  theme_bw() +
+  geom_point( 
+    data = ontarget_info, 
+    aes( x = SAMPLE, y = PCT_no_dup_ON_TARGET_no_dup_total, color = CAPTURE_BATCH, shape=COHORT ), 
+    size = 3) +
+  scale_color_manual( values=c('red','blue','green')) +
+  scale_shape_manual( values=c(16, 1, 2 )) +
+  theme(axis.text.x = element_blank() , axis.ticks.x = element_blank()) +
+  ylab('ON TARGET READS (NO DUPLICATES) /\n ALL READS (NO DUPLICATES)\n') +
+  xlab('\nIndividual')+
+  theme(axis.text = element_text(size=14) , axis.title = element_text(size=16))
+```
+
+```{r fig.height = 15, fig.width = 20}
+all_on_target_plots = ggarrange(p3,p4,p5,p6, ncol=2, nrow=2)
+plot(all_on_target_plots)
+
+pdf(here::here('results' , 'targeted_capture_OnTarget.pdf'), width=20, height=15)
+plot(all_on_target_plots)
+dev.off()
+```
+
+```{r fig.width=7, fig.height = 5}
+##
+##
+## Given that we cannot determine whether a PCR duplicate is a pre-capture or post-capture duplicate,
+## I decided that it would just be best to plot the on-target data using (on-target-reads NO duplicates)/(all-reads NO duplicates).
+##
+## Additionally, for the purposes of a concise supplementary figure.  I decided that for the coverage analysis
+## I would calculate the average coverage for each sample over all targeted capture regions.  This way the
+## average coverage for each individual is represented by one value and we can plot average coverage and pct_on_target
+## in two concise plots.  
+##
+## If more detailed data is desired for showing variance between fosmids, those were also saved as PDFs above.
+##
+##
+
+summary_covg_info = group_by(covg_info , INDIVIDUAL) %>%
+  summarise(avg_covg = mean(coverage))
+  
+avg_coverage_frame = select(original_covg_info, INDIVIDUAL,capture_batch,sequencing_batch) %>%
+  left_join(summary_covg_info) %>%
+  mutate(EXPERIMENT = c(rep('HS_CAPTURE',length(INDIVIDUAL)))) %>%
+  mutate(EXPERIMENT = factor(EXPERIMENT))%>%
+  mutate(capture_batch = factor(capture_batch, levels=c(1,2,3)))
+
+
+fold_coverage_plot = ggplot() +
+  theme_bw() +
+  geom_jitter(
+    data = avg_coverage_frame, 
+    aes(x = EXPERIMENT , y = avg_covg , color= capture_batch ),
+    width = 0.10,
+    height = 0,
+    size = 2 ) +
+  #geom_hline(yintercept = mean(avg_coverage_frame$avg_covg), linetype = 'dashed',color = 'black') +
+  scale_color_manual( values=c('red','blue','green')) +
+  ylab('Mean Fold Coverage\n')+
+  xlab('\nSamples')+
+  theme(axis.text.x=element_blank(),axis.text.y=element_text(size=14), axis.title = element_text(size=16)) +
+  scale_y_continuous(limits = c(25,175), breaks = c(25,50,75,100,125,150,175))
+
+on_target_plot = ggplot() +
+  theme_bw() +
+  geom_jitter(
+    data = ontarget_info, 
+    aes(
+      x = EXPERIMENT, 
+      y = (READS_ON_TARGET_NO_DUPLICATES/TOTAL_READS_NO_DUPLICATES), 
+      color= CAPTURE_BATCH ),
+    width = 0.1,
+    height = 0,
+    size = 2) +
+  scale_color_manual( values=c('red','blue','green')) +
+  ylab('Fraction of Reads On-Target\n') +
+  xlab('\nSamples') +
+  theme(
+    axis.text.x = element_blank(),
+    axis.text.y = element_text(size=14), 
+    axis.title = element_text(size=16))
+```
+
+```{r fig.width=14, fig.height=5}
+combined_figure = ggarrange( 
+  plotlist= list(fold_coverage_plot, on_target_plot), 
+  ncol=2, 
+  nrow=1, 
+  labels = c('a','b'))
+
+plot(combined_figure)
+
+on_target_AND_coverage_file = here::here('results','targeted_capture_performance.pdf')
+
+pdf( file = on_target_AND_coverage_file, width=15, height = 5.5 )
+plot(combined_figure)
+dev.off()
+```
