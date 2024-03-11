@@ -1,6 +1,8 @@
 # 2022 hidradenitis suppurativa *PSTPIP1* genetics project
 
-Preprint: pending
+Preprint: [medRxiv](https://www.medrxiv.org/content/10.1101/2022.07.12.22277558v1)
+
+Paper: [PubMed](https://pubmed.ncbi.nlm.nih.gov/37013170/)
 
 Supporting data: [Western Blots](https://figshare.com/projects/2022_hidradenitis_suppurativa_PSTPIP1_missense_enrichment/139684)
 
